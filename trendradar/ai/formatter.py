@@ -76,6 +76,67 @@ def _format_standalone_summaries(summaries: dict) -> str:
     return "\n\n".join(lines)
 
 
+def _format_portfolio_summary(portfolio: dict) -> str:
+    """
+    格式化持仓汇总报告为纯文本
+
+    Args:
+        portfolio: 持仓汇总 dict，包含:
+            - matrix_distribution: {"黄金区": [...], "需谨慎": [...], "烟蒂区": [...], "双杀区": [...]}
+            - top_opportunities: ["候选1", ...]
+            - risk_warnings: ["风险提示1", ...]
+            - action_suggestions: ["建议1", ...]
+
+    Returns:
+        格式化后的文本
+    """
+    if not portfolio:
+        return ""
+
+    lines = []
+
+    # 矩阵分布
+    matrix = portfolio.get("matrix_distribution", {})
+    if matrix:
+        lines.append("【矩阵分布】")
+        zone_names = {
+            "黄金区": "🟢 黄金区",
+            "需谨慎": "🟡 需谨慎",
+            "烟蒂区": "🔵 烟蒂区",
+            "双杀区": "🔴 双杀区"
+        }
+        for zone_key, zone_label in zone_names.items():
+            items = matrix.get(zone_key, [])
+            if items:
+                lines.append(f"  {zone_label}: {', '.join(items)}")
+        lines.append("")
+
+    # 重点机会
+    opportunities = portfolio.get("top_opportunities", [])
+    if opportunities:
+        lines.append("【重点机会】")
+        for opp in opportunities:
+            lines.append(f"  • {opp}")
+        lines.append("")
+
+    # 风险提示
+    warnings = portfolio.get("risk_warnings", [])
+    if warnings:
+        lines.append("【风险提示】")
+        for warn in warnings:
+            lines.append(f"  ⚠️ {warn}")
+        lines.append("")
+
+    # 操作建议
+    suggestions = portfolio.get("action_suggestions", [])
+    if suggestions:
+        lines.append("【操作建议】")
+        for sug in suggestions:
+            lines.append(f"  → {sug}")
+
+    return "\n".join(lines).strip()
+
+
 def render_ai_analysis_markdown(result: AIAnalysisResult) -> str:
     """渲染为通用 Markdown 格式（Telegram、企业微信、ntfy、Bark、Slack）"""
     if not result.success:
@@ -85,31 +146,26 @@ def render_ai_analysis_markdown(result: AIAnalysisResult) -> str:
 
     lines = ["**✨ AI 热点分析**", ""]
 
-    if result.core_trends:
-        lines.extend(["**核心热点态势**", _format_list_content(result.core_trends), ""])
+    if result.personal_layer:
+        lines.extend(["**个人层**", _format_list_content(result.personal_layer), ""])
 
-    if result.sentiment_controversy:
+    if result.regional_layer:
         lines.extend(
-            ["**舆论风向争议**", _format_list_content(result.sentiment_controversy), ""]
+            ["**地区层**", _format_list_content(result.regional_layer), ""]
         )
 
-    if result.signals:
-        lines.extend(["**异动与弱信号**", _format_list_content(result.signals), ""])
+    if result.social_layer:
+        lines.extend(["**社会层**", _format_list_content(result.social_layer), ""])
 
-    if result.rss_insights:
+    if result.national_layer:
         lines.extend(
-            ["**RSS 深度洞察**", _format_list_content(result.rss_insights), ""]
+            ["**国家层**", _format_list_content(result.national_layer), ""]
         )
 
-    if result.outlook_strategy:
-        lines.extend(
-            ["**研判策略建议**", _format_list_content(result.outlook_strategy), ""]
-        )
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            lines.extend(["**独立源点速览**", summaries_text])
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            lines.extend(["**持仓汇总**", portfolio_text, ""])
 
     return "\n".join(lines)
 
@@ -123,31 +179,26 @@ def render_ai_analysis_feishu(result: AIAnalysisResult) -> str:
 
     lines = ["**✨ AI 热点分析**", ""]
 
-    if result.core_trends:
-        lines.extend(["**核心热点态势**", _format_list_content(result.core_trends), ""])
+    if result.personal_layer:
+        lines.extend(["**个人层**", _format_list_content(result.personal_layer), ""])
 
-    if result.sentiment_controversy:
+    if result.regional_layer:
         lines.extend(
-            ["**舆论风向争议**", _format_list_content(result.sentiment_controversy), ""]
+            ["**地区层**", _format_list_content(result.regional_layer), ""]
         )
 
-    if result.signals:
-        lines.extend(["**异动与弱信号**", _format_list_content(result.signals), ""])
+    if result.social_layer:
+        lines.extend(["**社会层**", _format_list_content(result.social_layer), ""])
 
-    if result.rss_insights:
+    if result.national_layer:
         lines.extend(
-            ["**RSS 深度洞察**", _format_list_content(result.rss_insights), ""]
+            ["**国家层**", _format_list_content(result.national_layer), ""]
         )
 
-    if result.outlook_strategy:
-        lines.extend(
-            ["**研判策略建议**", _format_list_content(result.outlook_strategy), ""]
-        )
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            lines.extend(["**独立源点速览**", summaries_text])
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            lines.extend(["**持仓汇总**", portfolio_text, ""])
 
     return "\n".join(lines)
 
@@ -161,37 +212,32 @@ def render_ai_analysis_dingtalk(result: AIAnalysisResult) -> str:
 
     lines = ["### ✨ AI 热点分析", ""]
 
-    if result.core_trends:
+    if result.personal_layer:
         lines.extend(
-            ["#### 核心热点态势", _format_list_content(result.core_trends), ""]
+            ["#### 个人层", _format_list_content(result.personal_layer), ""]
         )
 
-    if result.sentiment_controversy:
+    if result.regional_layer:
         lines.extend(
             [
-                "#### 舆论风向争议",
-                _format_list_content(result.sentiment_controversy),
+                "#### 地区层",
+                _format_list_content(result.regional_layer),
                 "",
             ]
         )
 
-    if result.signals:
-        lines.extend(["#### 异动与弱信号", _format_list_content(result.signals), ""])
+    if result.social_layer:
+        lines.extend(["#### 社会层", _format_list_content(result.social_layer), ""])
 
-    if result.rss_insights:
+    if result.national_layer:
         lines.extend(
-            ["#### RSS 深度洞察", _format_list_content(result.rss_insights), ""]
+            ["#### 国家层", _format_list_content(result.national_layer), ""]
         )
 
-    if result.outlook_strategy:
-        lines.extend(
-            ["#### 研判策略建议", _format_list_content(result.outlook_strategy), ""]
-        )
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            lines.extend(["#### 独立源点速览", summaries_text])
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            lines.extend(["#### 持仓汇总", portfolio_text])
 
     return "\n".join(lines)
 
@@ -207,75 +253,63 @@ def render_ai_analysis_html(result: AIAnalysisResult) -> str:
 
     html_parts = ['<div class="ai-analysis">', "<h3>✨ AI 热点分析</h3>"]
 
-    if result.core_trends:
-        content = _format_list_content(result.core_trends)
+    if result.personal_layer:
+        content = _format_list_content(result.personal_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         html_parts.extend(
             [
                 '<div class="ai-section">',
-                "<h4>核心热点态势</h4>",
+                "<h4>个人层</h4>",
                 f'<div class="ai-content">{content_html}</div>',
                 "</div>",
             ]
         )
 
-    if result.sentiment_controversy:
-        content = _format_list_content(result.sentiment_controversy)
+    if result.regional_layer:
+        content = _format_list_content(result.regional_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         html_parts.extend(
             [
                 '<div class="ai-section">',
-                "<h4>舆论风向争议</h4>",
+                "<h4>地区层</h4>",
                 f'<div class="ai-content">{content_html}</div>',
                 "</div>",
             ]
         )
 
-    if result.signals:
-        content = _format_list_content(result.signals)
+    if result.social_layer:
+        content = _format_list_content(result.social_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         html_parts.extend(
             [
                 '<div class="ai-section">',
-                "<h4>异动与弱信号</h4>",
+                "<h4>社会层</h4>",
                 f'<div class="ai-content">{content_html}</div>',
                 "</div>",
             ]
         )
 
-    if result.rss_insights:
-        content = _format_list_content(result.rss_insights)
+    if result.national_layer:
+        content = _format_list_content(result.national_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         html_parts.extend(
             [
                 '<div class="ai-section">',
-                "<h4>RSS 深度洞察</h4>",
+                "<h4>国家层</h4>",
                 f'<div class="ai-content">{content_html}</div>',
                 "</div>",
             ]
         )
 
-    if result.outlook_strategy:
-        content = _format_list_content(result.outlook_strategy)
-        content_html = _escape_html(content).replace("\n", "<br>")
-        html_parts.extend(
-            [
-                '<div class="ai-section ai-conclusion">',
-                "<h4>研判策略建议</h4>",
-                f'<div class="ai-content">{content_html}</div>',
-                "</div>",
-            ]
-        )
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            summaries_html = _escape_html(summaries_text).replace("\n", "<br>")
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            portfolio_html = _escape_html(portfolio_text).replace("\n", "<br>")
             html_parts.extend(
                 [
-                    '<div class="ai-section">',
-                    "<h4>独立源点速览</h4>",
-                    f'<div class="ai-content">{summaries_html}</div>',
+                    '<div class="ai-section ai-conclusion">',
+                    "<h4>持仓汇总</h4>",
+                    f'<div class="ai-content">{portfolio_html}</div>',
                     "</div>",
                 ]
             )
@@ -293,27 +327,24 @@ def render_ai_analysis_plain(result: AIAnalysisResult) -> str:
 
     lines = ["【✨ AI 热点分析】", ""]
 
-    if result.core_trends:
-        lines.extend(["[核心热点态势]", _format_list_content(result.core_trends), ""])
+    if result.personal_layer:
+        lines.extend(["[个人层]", _format_list_content(result.personal_layer), ""])
 
-    if result.sentiment_controversy:
+    if result.regional_layer:
         lines.extend(
-            ["[舆论风向争议]", _format_list_content(result.sentiment_controversy), ""]
+            ["[地区层]", _format_list_content(result.regional_layer), ""]
         )
 
-    if result.signals:
-        lines.extend(["[异动与弱信号]", _format_list_content(result.signals), ""])
+    if result.social_layer:
+        lines.extend(["[社会层]", _format_list_content(result.social_layer), ""])
 
-    if result.rss_insights:
-        lines.extend(["[RSS 深度洞察]", _format_list_content(result.rss_insights), ""])
+    if result.national_layer:
+        lines.extend(["[国家层]", _format_list_content(result.national_layer), ""])
 
-    if result.outlook_strategy:
-        lines.extend(["[研判策略建议]", _format_list_content(result.outlook_strategy), ""])
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            lines.extend(["[独立源点速览]", summaries_text])
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            lines.extend(["[持仓汇总]", portfolio_text])
 
     return "\n".join(lines)
 
@@ -332,25 +363,22 @@ def render_ai_analysis_telegram(result: AIAnalysisResult) -> str:
 
     lines = ["<b>✨ AI 热点分析</b>", ""]
 
-    if result.core_trends:
-        lines.extend(["<b>核心热点态势</b>", _escape_html(_format_list_content(result.core_trends)), ""])
+    if result.personal_layer:
+        lines.extend(["<b>个人层</b>", _escape_html(_format_list_content(result.personal_layer)), ""])
 
-    if result.sentiment_controversy:
-        lines.extend(["<b>舆论风向争议</b>", _escape_html(_format_list_content(result.sentiment_controversy)), ""])
+    if result.regional_layer:
+        lines.extend(["<b>地区层</b>", _escape_html(_format_list_content(result.regional_layer)), ""])
 
-    if result.signals:
-        lines.extend(["<b>异动与弱信号</b>", _escape_html(_format_list_content(result.signals)), ""])
+    if result.social_layer:
+        lines.extend(["<b>社会层</b>", _escape_html(_format_list_content(result.social_layer)), ""])
 
-    if result.rss_insights:
-        lines.extend(["<b>RSS 深度洞察</b>", _escape_html(_format_list_content(result.rss_insights)), ""])
+    if result.national_layer:
+        lines.extend(["<b>国家层</b>", _escape_html(_format_list_content(result.national_layer)), ""])
 
-    if result.outlook_strategy:
-        lines.extend(["<b>研判策略建议</b>", _escape_html(_format_list_content(result.outlook_strategy)), ""])
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            lines.extend(["<b>独立源点速览</b>", _escape_html(summaries_text)])
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            lines.extend(["<b>持仓汇总</b>", _escape_html(portfolio_text)])
 
     return "\n".join(lines)
 
@@ -396,59 +424,50 @@ def render_ai_analysis_html_rich(result: AIAnalysisResult) -> str:
                     </div>
                     <div class="ai-blocks-grid">"""
 
-    if result.core_trends:
-        content = _format_list_content(result.core_trends)
+    if result.personal_layer:
+        content = _format_list_content(result.personal_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         ai_html += f"""
                     <div class="ai-block">
-                        <div class="ai-block-title">核心热点态势</div>
+                        <div class="ai-block-title">个人层</div>
                         <div class="ai-block-content">{content_html}</div>
                     </div>"""
 
-    if result.sentiment_controversy:
-        content = _format_list_content(result.sentiment_controversy)
+    if result.regional_layer:
+        content = _format_list_content(result.regional_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         ai_html += f"""
                     <div class="ai-block">
-                        <div class="ai-block-title">舆论风向争议</div>
+                        <div class="ai-block-title">地区层</div>
                         <div class="ai-block-content">{content_html}</div>
                     </div>"""
 
-    if result.signals:
-        content = _format_list_content(result.signals)
+    if result.social_layer:
+        content = _format_list_content(result.social_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         ai_html += f"""
                     <div class="ai-block">
-                        <div class="ai-block-title">异动与弱信号</div>
+                        <div class="ai-block-title">社会层</div>
                         <div class="ai-block-content">{content_html}</div>
                     </div>"""
 
-    if result.rss_insights:
-        content = _format_list_content(result.rss_insights)
+    if result.national_layer:
+        content = _format_list_content(result.national_layer)
         content_html = _escape_html(content).replace("\n", "<br>")
         ai_html += f"""
                     <div class="ai-block">
-                        <div class="ai-block-title">RSS 深度洞察</div>
+                        <div class="ai-block-title">国家层</div>
                         <div class="ai-block-content">{content_html}</div>
                     </div>"""
 
-    if result.outlook_strategy:
-        content = _format_list_content(result.outlook_strategy)
-        content_html = _escape_html(content).replace("\n", "<br>")
-        ai_html += f"""
-                    <div class="ai-block">
-                        <div class="ai-block-title">研判策略建议</div>
-                        <div class="ai-block-content">{content_html}</div>
-                    </div>"""
-
-    if result.standalone_summaries:
-        summaries_text = _format_standalone_summaries(result.standalone_summaries)
-        if summaries_text:
-            summaries_html = _escape_html(summaries_text).replace("\n", "<br>")
+    if result.portfolio_summary:
+        portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+        if portfolio_text:
+            portfolio_html = _escape_html(portfolio_text).replace("\n", "<br>")
             ai_html += f"""
                     <div class="ai-block">
-                        <div class="ai-block-title">独立源点速览</div>
-                        <div class="ai-block-content">{summaries_html}</div>
+                        <div class="ai-block-title">持仓汇总</div>
+                        <div class="ai-block-content">{portfolio_html}</div>
                     </div>"""
 
     ai_html += """

@@ -17,13 +17,12 @@ from trendradar.ai.prompt_loader import load_prompt_template
 @dataclass
 class AIAnalysisResult:
     """AI 分析结果"""
-    # 新版 5 核心板块
-    core_trends: str = ""                # 核心热点与舆情态势
-    sentiment_controversy: str = ""      # 舆论风向与争议
-    signals: str = ""                    # 异动与弱信号
-    rss_insights: str = ""               # RSS 深度洞察
-    outlook_strategy: str = ""           # 研判与策略建议
-    standalone_summaries: Dict[str, str] = field(default_factory=dict)  # 独立展示区概括 {源ID: 概括}
+    # 新版 5 核心板块 (v3.0.0)
+    personal_layer: str = ""             # 个人层 — 个人投资者行为与情绪
+    regional_layer: str = ""             # 地区层 — 区域市场联动与机会
+    social_layer: str = ""               # 社会层 — 行业趋势与社会热点
+    national_layer: str = ""              # 国家层 — 宏观政策与国际关系
+    portfolio_summary: Dict[str, Any] = field(default_factory=dict)  # 持仓汇总报告
 
     # 基础元数据
     raw_response: str = ""               # 原始响应
@@ -202,13 +201,11 @@ class AIAnalyzer:
                 else:
                     print("[AI] JSON 修复失败，使用原始文本兜底")
 
-            # 如果配置未启用 RSS 分析，强制清空 AI 返回的 RSS 洞察
-            if not self.include_rss:
-                result.rss_insights = ""
+            # 如果配置未启用 RSS 分析，清空 national_layer 中的 RSS 相关内容（如果 AI 返回了的话）
+            # 注：v3.0.0 中 RSS 内容已整合到 national_layer，不再有独立的 rss_insights 字段
 
-            # 如果配置未启用 standalone 分析，强制清空
-            if not self.include_standalone:
-                result.standalone_summaries = {}
+            # 如果配置未启用 standalone 分析，清空 social_layer 中的独立展示区相关容
+            # 注：v3.0.0 中 standalone 已整合到 social_layer，不再有独立的 standalone_summaries 字段
 
             # 填充统计数据
             result.total_news = total_news
@@ -557,7 +554,7 @@ class AIAnalyzer:
         json_str = json_str.strip()
         if not json_str:
             result.error = "提取的 JSON 内容为空"
-            result.core_trends = response[:500] + "..." if len(response) > 500 else response
+            result.personal_layer = response[:500] + "..." if len(response) > 500 else response
             result.success = True
             return result
 
@@ -591,29 +588,29 @@ class AIAnalyzer:
             else:
                 result.error = "JSON 解析失败"
             # 兜底：使用已提取的 json_str（不含 markdown 标记），避免推送中出现 ```json
-            result.core_trends = json_str[:500] + "..." if len(json_str) > 500 else json_str
+            result.personal_layer = json_str[:500] + "..." if len(json_str) > 500 else json_str
             result.success = True
             return result
 
-        # 解析成功，提取字段
+        # 解析成功，提取字段 (v3.0.0 新结构)
         try:
-            result.core_trends = data.get("core_trends", "")
-            result.sentiment_controversy = data.get("sentiment_controversy", "")
-            result.signals = data.get("signals", "")
-            result.rss_insights = data.get("rss_insights", "")
-            result.outlook_strategy = data.get("outlook_strategy", "")
+            result.personal_layer = data.get("personal_layer", "")
+            result.regional_layer = data.get("regional_layer", "")
+            result.social_layer = data.get("social_layer", "")
+            result.national_layer = data.get("national_layer", "")
 
-            # 解析独立展示区概括
-            summaries = data.get("standalone_summaries", {})
-            if isinstance(summaries, dict):
-                result.standalone_summaries = {
-                    str(k): str(v) for k, v in summaries.items()
-                }
+            # 解析持仓汇总报告（结构化 JSON 对象）
+            portfolio = data.get("portfolio_summary", {})
+            if isinstance(portfolio, dict):
+                result.portfolio_summary = portfolio
+            elif isinstance(portfolio, str):
+                # 如果 AI 返回的是字符串而非对象，包装为简单结构
+                result.portfolio_summary = {"raw_content": portfolio}
 
             result.success = True
         except (KeyError, TypeError, AttributeError) as e:
             result.error = f"字段提取错误: {type(e).__name__}: {e}"
-            result.core_trends = json_str[:500] + "..." if len(json_str) > 500 else json_str
+            result.personal_layer = json_str[:500] + "..." if len(json_str) > 500 else json_str
             result.success = True
 
         return result
