@@ -37,6 +37,7 @@ on:
     #
     - cron: "0 1 * * *"  
     - cron: "0 10 * * *"  
+    - cron: "0 22 * * *"  
 
   workflow_dispatch:
 

@@ -162,6 +162,9 @@ def render_ai_analysis_markdown(result: AIAnalysisResult) -> str:
             ["**国家层**", _format_list_content(result.national_layer), ""]
         )
 
+    if result.tech_layer:
+        lines.extend(["**科技层**", _format_list_content(result.tech_layer), ""])
+
     if result.portfolio_summary:
         portfolio_text = _format_portfolio_summary(result.portfolio_summary)
         if portfolio_text:
@@ -194,6 +197,9 @@ def render_ai_analysis_feishu(result: AIAnalysisResult) -> str:
         lines.extend(
             ["**国家层**", _format_list_content(result.national_layer), ""]
         )
+
+    if result.tech_layer:
+        lines.extend(["**科技层**", _format_list_content(result.tech_layer), ""])
 
     if result.portfolio_summary:
         portfolio_text = _format_portfolio_summary(result.portfolio_summary)
@@ -233,6 +239,9 @@ def render_ai_analysis_dingtalk(result: AIAnalysisResult) -> str:
         lines.extend(
             ["#### 国家层", _format_list_content(result.national_layer), ""]
         )
+
+    if result.tech_layer:
+        lines.extend(["#### 科技层", _format_list_content(result.tech_layer), ""])
 
     if result.portfolio_summary:
         portfolio_text = _format_portfolio_summary(result.portfolio_summary)
@@ -301,6 +310,18 @@ def render_ai_analysis_html(result: AIAnalysisResult) -> str:
             ]
         )
 
+    if result.tech_layer:
+        content = _format_list_content(result.tech_layer)
+        content_html = _escape_html(content).replace("\n", "<br>")
+        html_parts.extend(
+            [
+                '<div class="ai-section">',
+                "<h4>科技层</h4>",
+                f'<div class="ai-content">{content_html}</div>',
+                "</div>",
+            ]
+        )
+
     if result.portfolio_summary:
         portfolio_text = _format_portfolio_summary(result.portfolio_summary)
         if portfolio_text:
@@ -341,6 +362,9 @@ def render_ai_analysis_plain(result: AIAnalysisResult) -> str:
     if result.national_layer:
         lines.extend(["[国家层]", _format_list_content(result.national_layer), ""])
 
+    if result.tech_layer:
+        lines.extend(["[科技层]", _format_list_content(result.tech_layer), ""])
+
     if result.portfolio_summary:
         portfolio_text = _format_portfolio_summary(result.portfolio_summary)
         if portfolio_text:
@@ -374,6 +398,9 @@ def render_ai_analysis_telegram(result: AIAnalysisResult) -> str:
 
     if result.national_layer:
         lines.extend(["<b>国家层</b>", _escape_html(_format_list_content(result.national_layer)), ""])
+
+    if result.tech_layer:
+        lines.extend(["<b>科技层</b>", _escape_html(_format_list_content(result.tech_layer)), ""])
 
     if result.portfolio_summary:
         portfolio_text = _format_portfolio_summary(result.portfolio_summary)
@@ -457,6 +484,15 @@ def render_ai_analysis_html_rich(result: AIAnalysisResult) -> str:
         ai_html += f"""
                     <div class="ai-block">
                         <div class="ai-block-title">国家层</div>
+                        <div class="ai-block-content">{content_html}</div>
+                    </div>"""
+
+    if result.tech_layer:
+        content = _format_list_content(result.tech_layer)
+        content_html = _escape_html(content).replace("\n", "<br>")
+        ai_html += f"""
+                    <div class="ai-block">
+                        <div class="ai-block-title">科技层</div>
                         <div class="ai-block-content">{content_html}</div>
                     </div>"""
 

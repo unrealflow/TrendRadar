@@ -17,11 +17,12 @@ from trendradar.ai.prompt_loader import load_prompt_template
 @dataclass
 class AIAnalysisResult:
     """AI 分析结果"""
-    # 新版 5 核心板块 (v3.0.0)
+    # 新版 6 核心板块 (v3.1.0)
     personal_layer: str = ""             # 个人层 — 个人投资者行为与情绪
     regional_layer: str = ""             # 地区层 — 区域市场联动与机会
     social_layer: str = ""               # 社会层 — 行业趋势与社会热点
     national_layer: str = ""              # 国家层 — 宏观政策与国际关系
+    tech_layer: str = ""                  # 科技层 — 重大技术进展与影响
     portfolio_summary: Dict[str, Any] = field(default_factory=dict)  # 持仓汇总报告
 
     # 基础元数据
@@ -592,12 +593,13 @@ class AIAnalyzer:
             result.success = True
             return result
 
-        # 解析成功，提取字段 (v3.0.0 新结构)
+        # 解析成功，提取字段 (v3.1.0 新结构)
         try:
             result.personal_layer = data.get("personal_layer", "")
             result.regional_layer = data.get("regional_layer", "")
             result.social_layer = data.get("social_layer", "")
             result.national_layer = data.get("national_layer", "")
+            result.tech_layer = data.get("tech_layer", "")
 
             # 解析持仓汇总报告（结构化 JSON 对象）
             portfolio = data.get("portfolio_summary", {})
