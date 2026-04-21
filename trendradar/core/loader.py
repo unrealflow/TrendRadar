@@ -297,6 +297,11 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
         "INCLUDE_RSS": ai_config.get("include_rss", True),
         "INCLUDE_RANK_TIMELINE": ai_config.get("include_rank_timeline", False),
         "INCLUDE_STANDALONE": ai_config.get("include_standalone", False),
+        "STAGED_MODE": ai_config.get("staged_mode", False),
+        "STAGED_SECTIONS": ai_config.get(
+            "staged_sections",
+            ["report_overview", "key_message_impacts", "portfolio_summary"],
+        ),
     }
 
 

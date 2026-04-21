@@ -273,6 +273,10 @@ class NewsAnalyzer:
 
     def _should_open_browser(self) -> bool:
         """判断是否应该打开浏览器"""
+        env_value = os.environ.get("TRENDRADAR_OPEN_BROWSER", "").strip().lower()
+        if env_value not in {"1", "true", "yes", "on"}:
+            return False
+
         return not self.is_github_actions and not self.is_docker_container
 
     def _setup_proxy(self) -> None:
@@ -1693,9 +1697,9 @@ class NewsAnalyzer:
                 schedule=schedule,
             )
 
-        # 打开浏览器（仅在非容器环境）
+        # 打开浏览器（仅在显式启用且非容器环境）
         if self._should_open_browser() and html_file:
-            file_url = "file://" + str(Path(html_file).resolve())
+            file_url = Path(html_file).resolve().as_uri()
             print(f"正在打开HTML报告: {file_url}")
             webbrowser.open(file_url)
         elif self.is_docker_container and html_file:

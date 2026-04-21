@@ -10,6 +10,23 @@ import re
 from .analyzer import AIAnalysisResult
 
 
+_FEISHU_MARKDOWN_REPLACEMENTS = {
+    "**核心判断**": "**🧠 核心判断**",
+    "**重点消息**": "**🔥 重点消息**",
+    "**评级建议**": "**📊 评级建议**",
+    "**消息行业映射**": "**🔥 消息行业映射**",
+    "**个人层**": "**🙋 个人层**",
+    "**地区层**": "**🌍 地区层**",
+    "**行业层**": "**🏭 行业层**",
+    "**国家层**": "**🏛️ 国家层**",
+    "**科技层**": "**🧪 科技层**",
+    "**持仓汇总**": "**📦 持仓汇总**",
+    "【持仓内】": "【🧺 持仓内】",
+    "【持仓外】": "【🧭 持仓外】",
+    "【风险提示】": "【⚠️ 风险提示】",
+}
+
+
 def _escape_html(text: str) -> str:
     """转义 HTML 特殊字符，防止 XSS 攻击"""
     return html_lib.escape(text) if text else ""
@@ -76,6 +93,122 @@ def _format_standalone_summaries(summaries: dict) -> str:
     return "\n\n".join(lines)
 
 
+def _format_message_impacts(message_impacts: list) -> str:
+    """格式化逐条消息行业映射。"""
+    if not message_impacts:
+        return ""
+
+    lines = []
+    for index, item in enumerate(message_impacts, start=1):
+        if not isinstance(item, dict):
+            continue
+
+        core_view = item.get("core_view")
+        signal_type = item.get("signal_type")
+        related_targets = item.get("related_targets")
+        direct_chain = item.get("direct_chain")
+        indirect_chain = item.get("indirect_chain")
+
+        if core_view or signal_type or related_targets or direct_chain or indirect_chain:
+            header_parts = []
+            message_id = item.get("id")
+            title = item.get("title")
+            source = item.get("source")
+            industry = item.get("industry")
+
+            if message_id:
+                header_parts.append(str(message_id))
+            if title:
+                header_parts.append(f"「{title}」")
+            if source:
+                header_parts.append(f"[{source}]")
+            if industry:
+                header_parts.append(f"主行业：{industry}")
+
+            if header_parts:
+                lines.append(f"{index}. " + " | ".join(header_parts))
+            if core_view:
+                lines.append(f"核心判断：{core_view}")
+            if signal_type:
+                lines.append(f"催化类型：{signal_type}")
+            if related_targets:
+                if isinstance(related_targets, (list, tuple, set)):
+                    targets_text = "、".join(
+                        str(target).strip()
+                        for target in related_targets
+                        if str(target).strip()
+                    )
+                else:
+                    targets_text = str(related_targets).strip()
+                if targets_text:
+                    lines.append(f"相关标的：{targets_text}")
+            if direct_chain:
+                lines.append(f"直接传导：{direct_chain}")
+            if indirect_chain:
+                lines.append(f"间接传导：{indirect_chain}")
+            lines.append("")
+            continue
+
+        parts = []
+        message_id = item.get("id")
+        title = item.get("title")
+        source = item.get("source")
+        industry = item.get("industry")
+        impact = item.get("impact")
+        holding_status = item.get("holding_status")
+        opportunity_level = item.get("opportunity_level")
+
+        if message_id:
+            parts.append(str(message_id))
+        if title:
+            parts.append(f"「{title}」")
+        if source:
+            parts.append(f"[{source}]")
+        if industry:
+            parts.append(str(industry))
+        if impact:
+            parts.append(str(impact))
+        if holding_status:
+            parts.append(str(holding_status))
+        if opportunity_level:
+            parts.append(str(opportunity_level))
+
+        if parts:
+            lines.append(f"{index}. " + " | ".join(parts))
+
+    return "\n".join(lines).strip()
+
+
+def _format_action_items(items: list, is_holding: bool) -> list[str]:
+    """格式化评级动作列表。"""
+    if not items:
+        return []
+
+    lines = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+
+        if is_holding:
+            code = item.get("code", "")
+            name = item.get("name") or code or "未命名持仓"
+            target = f"{name}({code})" if code and name != code else name
+        else:
+            target = item.get("target") or item.get("name") or "未命名标的"
+
+        rating = item.get("rating", "")
+        reason = item.get("reason", "")
+
+        line = f"{index}. {target}"
+        if rating:
+            line += f"：{rating}"
+        if reason:
+            line += f"；{reason}"
+        lines.append(line)
+
+    return lines
+
+
 def _format_portfolio_summary(portfolio: dict) -> str:
     """
     格式化持仓汇总报告为纯文本
@@ -93,48 +226,170 @@ def _format_portfolio_summary(portfolio: dict) -> str:
     if not portfolio:
         return ""
 
+    raw_content = portfolio.get("raw_content")
+    if raw_content:
+        return str(raw_content).strip()
+
+    in_portfolio_actions = portfolio.get("in_portfolio_actions", [])
+    out_of_portfolio_actions = portfolio.get("out_of_portfolio_actions", [])
+    if in_portfolio_actions or out_of_portfolio_actions:
+        lines = []
+
+        in_lines = _format_action_items(in_portfolio_actions, is_holding=True)
+        if in_lines:
+            lines.append("【持仓内】")
+            lines.extend(in_lines)
+            lines.append("")
+
+        out_lines = _format_action_items(out_of_portfolio_actions, is_holding=False)
+        if out_lines:
+            lines.append("【持仓外】")
+            lines.extend(out_lines)
+            lines.append("")
+
+        warnings = portfolio.get("risk_warnings", [])
+        if warnings:
+            lines.append("【风险提示】")
+            for index, warn in enumerate(warnings, start=1):
+                lines.append(f"{index}. {warn}")
+
+        return "\n".join(lines).strip()
+
     lines = []
 
     # 矩阵分布
     matrix = portfolio.get("matrix_distribution", {})
     if matrix:
         lines.append("【矩阵分布】")
-        zone_names = {
-            "黄金区": "🟢 黄金区",
-            "需谨慎": "🟡 需谨慎",
-            "烟蒂区": "🔵 烟蒂区",
-            "双杀区": "🔴 双杀区"
-        }
-        for zone_key, zone_label in zone_names.items():
+        for zone_key in ["黄金区", "需谨慎", "烟蒂区", "双杀区"]:
             items = matrix.get(zone_key, [])
             if items:
-                lines.append(f"  {zone_label}: {', '.join(items)}")
+                lines.append(f"{zone_key}: {', '.join(items)}")
         lines.append("")
 
     # 重点机会
     opportunities = portfolio.get("top_opportunities", [])
     if opportunities:
-        lines.append("【重点机会】")
-        for opp in opportunities:
-            lines.append(f"  • {opp}")
+        lines.append("【优先机会】")
+        for index, opp in enumerate(opportunities, start=1):
+            lines.append(f"{index}. {opp}")
         lines.append("")
 
     # 风险提示
     warnings = portfolio.get("risk_warnings", [])
     if warnings:
         lines.append("【风险提示】")
-        for warn in warnings:
-            lines.append(f"  ⚠️ {warn}")
+        for index, warn in enumerate(warnings, start=1):
+            lines.append(f"{index}. {warn}")
         lines.append("")
 
     # 操作建议
     suggestions = portfolio.get("action_suggestions", [])
     if suggestions:
         lines.append("【操作建议】")
-        for sug in suggestions:
-            lines.append(f"  → {sug}")
+        for index, sug in enumerate(suggestions, start=1):
+            lines.append(f"{index}. {sug}")
 
     return "\n".join(lines).strip()
+
+
+def _get_research_sections(result: AIAnalysisResult) -> list[tuple[str, str]]:
+    """生成研报式输出的核心 section。"""
+    sections = []
+
+    if result.report_overview:
+        sections.append(("核心判断", _format_list_content(result.report_overview)))
+
+    key_message_impacts = result.key_message_impacts or result.message_impacts
+    if key_message_impacts:
+        sections.append(("重点消息", _format_message_impacts(key_message_impacts)))
+
+    portfolio_text = _format_portfolio_summary(result.portfolio_summary)
+    if portfolio_text:
+        sections.append(("评级建议", portfolio_text))
+
+    return [(title, content) for title, content in sections if content]
+
+
+def _decorate_feishu_output(content: str) -> str:
+    """为飞书 Markdown 输出添加轻量表情装饰。"""
+    if not content:
+        return ""
+
+    for old, new in _FEISHU_MARKDOWN_REPLACEMENTS.items():
+        content = content.replace(old, new)
+    return content
+
+
+def _has_research_sections(result: AIAnalysisResult) -> bool:
+    return bool(_get_research_sections(result))
+
+
+def _render_research_markdown(result: AIAnalysisResult) -> str:
+    lines = ["**✨ AI 热点研判**", ""]
+    for title, content in _get_research_sections(result):
+        lines.extend([f"**{title}**", content, ""])
+    return "\n".join(lines)
+
+
+def _render_research_dingtalk(result: AIAnalysisResult) -> str:
+    lines = ["### ✨ AI 热点研判", ""]
+    for title, content in _get_research_sections(result):
+        lines.extend([f"#### {title}", content, ""])
+    return "\n".join(lines)
+
+
+def _render_research_plain(result: AIAnalysisResult) -> str:
+    lines = ["【✨ AI 热点研判】", ""]
+    for title, content in _get_research_sections(result):
+        lines.extend([f"[{title}]", content, ""])
+    return "\n".join(lines)
+
+
+def _render_research_telegram(result: AIAnalysisResult) -> str:
+    lines = ["<b>✨ AI 热点研判</b>", ""]
+    for title, content in _get_research_sections(result):
+        lines.extend([f"<b>{_escape_html(title)}</b>", _escape_html(content), ""])
+    return "\n".join(lines)
+
+
+def _render_research_html(result: AIAnalysisResult) -> str:
+    html_parts = ['<div class="ai-analysis">', "<h3>✨ AI 热点研判</h3>"]
+    for title, content in _get_research_sections(result):
+        content_html = _escape_html(content).replace("\n", "<br>")
+        html_parts.extend(
+            [
+                '<div class="ai-section">',
+                f"<h4>{_escape_html(title)}</h4>",
+                f'<div class="ai-content">{content_html}</div>',
+                "</div>",
+            ]
+        )
+    html_parts.append("</div>")
+    return "\n".join(html_parts)
+
+
+def _render_research_html_rich(result: AIAnalysisResult) -> str:
+    ai_html = """
+                <div class="ai-section">
+                    <div class="ai-section-header">
+                        <div class="ai-section-title">✨ AI 热点研判</div>
+                        <span class="ai-section-badge">AI</span>
+                    </div>
+                    <div class="ai-blocks-grid">"""
+
+    for title, content in _get_research_sections(result):
+        content_html = _escape_html(content).replace("\n", "<br>")
+        ai_html += f"""
+                    <div class="ai-block">
+                        <div class="ai-block-title">{_escape_html(title)}</div>
+                        <div class="ai-block-content">{content_html}</div>
+                    </div>"""
+
+    ai_html += """
+                    </div>
+                </div>"""
+    return ai_html
 
 
 def render_ai_analysis_markdown(result: AIAnalysisResult) -> str:
@@ -144,7 +399,13 @@ def render_ai_analysis_markdown(result: AIAnalysisResult) -> str:
             return f"ℹ️ {result.error}"
         return f"⚠️ AI 分析失败: {result.error}"
 
+    if _has_research_sections(result):
+        return _render_research_markdown(result)
+
     lines = ["**✨ AI 热点分析**", ""]
+
+    if result.message_impacts:
+        lines.extend(["**消息行业映射**", _format_message_impacts(result.message_impacts), ""])
 
     if result.personal_layer:
         lines.extend(["**个人层**", _format_list_content(result.personal_layer), ""])
@@ -155,7 +416,7 @@ def render_ai_analysis_markdown(result: AIAnalysisResult) -> str:
         )
 
     if result.social_layer:
-        lines.extend(["**社会层**", _format_list_content(result.social_layer), ""])
+        lines.extend(["**行业层**", _format_list_content(result.social_layer), ""])
 
     if result.national_layer:
         lines.extend(
@@ -180,7 +441,13 @@ def render_ai_analysis_feishu(result: AIAnalysisResult) -> str:
             return f"ℹ️ {result.error}"
         return f"⚠️ AI 分析失败: {result.error}"
 
+    if _has_research_sections(result):
+        return _decorate_feishu_output(_render_research_markdown(result))
+
     lines = ["**✨ AI 热点分析**", ""]
+
+    if result.message_impacts:
+        lines.extend(["**消息行业映射**", _format_message_impacts(result.message_impacts), ""])
 
     if result.personal_layer:
         lines.extend(["**个人层**", _format_list_content(result.personal_layer), ""])
@@ -191,7 +458,7 @@ def render_ai_analysis_feishu(result: AIAnalysisResult) -> str:
         )
 
     if result.social_layer:
-        lines.extend(["**社会层**", _format_list_content(result.social_layer), ""])
+        lines.extend(["**行业层**", _format_list_content(result.social_layer), ""])
 
     if result.national_layer:
         lines.extend(
@@ -206,7 +473,7 @@ def render_ai_analysis_feishu(result: AIAnalysisResult) -> str:
         if portfolio_text:
             lines.extend(["**持仓汇总**", portfolio_text, ""])
 
-    return "\n".join(lines)
+    return _decorate_feishu_output("\n".join(lines))
 
 
 def render_ai_analysis_dingtalk(result: AIAnalysisResult) -> str:
@@ -216,7 +483,13 @@ def render_ai_analysis_dingtalk(result: AIAnalysisResult) -> str:
             return f"ℹ️ {result.error}"
         return f"⚠️ AI 分析失败: {result.error}"
 
+    if _has_research_sections(result):
+        return _render_research_dingtalk(result)
+
     lines = ["### ✨ AI 热点分析", ""]
+
+    if result.message_impacts:
+        lines.extend(["#### 消息行业映射", _format_message_impacts(result.message_impacts), ""])
 
     if result.personal_layer:
         lines.extend(
@@ -233,7 +506,7 @@ def render_ai_analysis_dingtalk(result: AIAnalysisResult) -> str:
         )
 
     if result.social_layer:
-        lines.extend(["#### 社会层", _format_list_content(result.social_layer), ""])
+        lines.extend(["#### 行业层", _format_list_content(result.social_layer), ""])
 
     if result.national_layer:
         lines.extend(
@@ -260,7 +533,22 @@ def render_ai_analysis_html(result: AIAnalysisResult) -> str:
             f'<div class="ai-error">⚠️ AI 分析失败: {_escape_html(result.error)}</div>'
         )
 
+    if _has_research_sections(result):
+        return _render_research_html(result)
+
     html_parts = ['<div class="ai-analysis">', "<h3>✨ AI 热点分析</h3>"]
+
+    if result.message_impacts:
+        content = _format_message_impacts(result.message_impacts)
+        content_html = _escape_html(content).replace("\n", "<br>")
+        html_parts.extend(
+            [
+                '<div class="ai-section">',
+                "<h4>消息行业映射</h4>",
+                f'<div class="ai-content">{content_html}</div>',
+                "</div>",
+            ]
+        )
 
     if result.personal_layer:
         content = _format_list_content(result.personal_layer)
@@ -292,7 +580,7 @@ def render_ai_analysis_html(result: AIAnalysisResult) -> str:
         html_parts.extend(
             [
                 '<div class="ai-section">',
-                "<h4>社会层</h4>",
+                "<h4>行业层</h4>",
                 f'<div class="ai-content">{content_html}</div>',
                 "</div>",
             ]
@@ -346,7 +634,13 @@ def render_ai_analysis_plain(result: AIAnalysisResult) -> str:
             return result.error
         return f"AI 分析失败: {result.error}"
 
+    if _has_research_sections(result):
+        return _render_research_plain(result)
+
     lines = ["【✨ AI 热点分析】", ""]
+
+    if result.message_impacts:
+        lines.extend(["[消息行业映射]", _format_message_impacts(result.message_impacts), ""])
 
     if result.personal_layer:
         lines.extend(["[个人层]", _format_list_content(result.personal_layer), ""])
@@ -357,7 +651,7 @@ def render_ai_analysis_plain(result: AIAnalysisResult) -> str:
         )
 
     if result.social_layer:
-        lines.extend(["[社会层]", _format_list_content(result.social_layer), ""])
+        lines.extend(["[行业层]", _format_list_content(result.social_layer), ""])
 
     if result.national_layer:
         lines.extend(["[国家层]", _format_list_content(result.national_layer), ""])
@@ -385,7 +679,13 @@ def render_ai_analysis_telegram(result: AIAnalysisResult) -> str:
             return f"ℹ️ {_escape_html(result.error)}"
         return f"⚠️ AI 分析失败: {_escape_html(result.error)}"
 
+    if _has_research_sections(result):
+        return _render_research_telegram(result)
+
     lines = ["<b>✨ AI 热点分析</b>", ""]
+
+    if result.message_impacts:
+        lines.extend(["<b>消息行业映射</b>", _escape_html(_format_message_impacts(result.message_impacts)), ""])
 
     if result.personal_layer:
         lines.extend(["<b>个人层</b>", _escape_html(_format_list_content(result.personal_layer)), ""])
@@ -394,7 +694,7 @@ def render_ai_analysis_telegram(result: AIAnalysisResult) -> str:
         lines.extend(["<b>地区层</b>", _escape_html(_format_list_content(result.regional_layer)), ""])
 
     if result.social_layer:
-        lines.extend(["<b>社会层</b>", _escape_html(_format_list_content(result.social_layer)), ""])
+        lines.extend(["<b>行业层</b>", _escape_html(_format_list_content(result.social_layer)), ""])
 
     if result.national_layer:
         lines.extend(["<b>国家层</b>", _escape_html(_format_list_content(result.national_layer)), ""])
@@ -443,6 +743,9 @@ def render_ai_analysis_html_rich(result: AIAnalysisResult) -> str:
                     <div class="ai-error">⚠️ AI 分析失败: {_escape_html(str(error_msg))}</div>
                 </div>"""
 
+    if _has_research_sections(result):
+        return _render_research_html_rich(result)
+
     ai_html = """
                 <div class="ai-section">
                     <div class="ai-section-header">
@@ -450,6 +753,15 @@ def render_ai_analysis_html_rich(result: AIAnalysisResult) -> str:
                         <span class="ai-section-badge">AI</span>
                     </div>
                     <div class="ai-blocks-grid">"""
+
+    if result.message_impacts:
+        content = _format_message_impacts(result.message_impacts)
+        content_html = _escape_html(content).replace("\n", "<br>")
+        ai_html += f"""
+                    <div class="ai-block">
+                        <div class="ai-block-title">消息行业映射</div>
+                        <div class="ai-block-content">{content_html}</div>
+                    </div>"""
 
     if result.personal_layer:
         content = _format_list_content(result.personal_layer)
@@ -474,7 +786,7 @@ def render_ai_analysis_html_rich(result: AIAnalysisResult) -> str:
         content_html = _escape_html(content).replace("\n", "<br>")
         ai_html += f"""
                     <div class="ai-block">
-                        <div class="ai-block-title">社会层</div>
+                        <div class="ai-block-title">行业层</div>
                         <div class="ai-block-content">{content_html}</div>
                     </div>"""
 

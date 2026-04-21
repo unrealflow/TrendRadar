@@ -38,6 +38,7 @@ class AIClient:
         self.timeout = config.get("TIMEOUT", 120)
         self.num_retries = config.get("NUM_RETRIES", 2)
         self.fallback_models = config.get("FALLBACK_MODELS", [])
+        self.extra_params = config.get("EXTRA_PARAMS", {}) or {}
 
     def chat(
         self,
@@ -83,10 +84,29 @@ class AIClient:
         if self.fallback_models:
             params["fallbacks"] = self.fallback_models
 
-        # 合并其他额外参数
+        # 合并配置中的额外参数，并允许调用时覆盖同名字段
+        reserved_keys = {
+            "model",
+            "messages",
+            "temperature",
+            "timeout",
+            "num_retries",
+            "api_key",
+            "api_base",
+            "max_tokens",
+            "fallbacks",
+        }
+
+        merged_extra_params = {
+            key: value
+            for key, value in self.extra_params.items()
+            if value is not None
+        }
         for key, value in kwargs.items():
-            if key not in params:
-                params[key] = value
+            if key not in reserved_keys and value is not None:
+                merged_extra_params[key] = value
+
+        params.update(merged_extra_params)
 
         # 调用 LiteLLM
         response = completion(**params)

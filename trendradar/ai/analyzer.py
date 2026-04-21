@@ -7,6 +7,7 @@ AI 分析器模块
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -17,7 +18,12 @@ from trendradar.ai.prompt_loader import load_prompt_template
 @dataclass
 class AIAnalysisResult:
     """AI 分析结果"""
-    # 新版 6 核心板块 (v3.1.0)
+    # 研报式结构 (v3.3.0)
+    report_overview: str = ""             # 研报摘要 / 核心判断
+    key_message_impacts: List[Dict[str, Any]] = field(default_factory=list)  # 仅展示高影响消息及传导链
+
+    # 兼容旧结构 (v3.2.0)
+    message_impacts: List[Dict[str, Any]] = field(default_factory=list)  # 旧版按消息编号输出的行业映射
     personal_layer: str = ""             # 个人层 — 个人投资者行为与情绪
     regional_layer: str = ""             # 地区层 — 区域市场联动与机会
     social_layer: str = ""               # 社会层 — 行业趋势与社会热点
@@ -42,6 +48,85 @@ class AIAnalysisResult:
 
 class AIAnalyzer:
     """AI 分析器"""
+
+    IN_PORTFOLIO_RATINGS = {"加仓", "减仓", "卖出"}
+    OUT_OF_PORTFOLIO_RATINGS = {"买入", "观望"}
+    CHAIN_TARGET_SUFFIXES = (
+        "需求持续走强",
+        "需求明显走强",
+        "需求快速走强",
+        "需求走强",
+        "需求提升",
+        "需求增加",
+        "需求扩张",
+        "需求改善",
+        "需求上行",
+        "订单兑现",
+        "订单改善",
+        "订单增加",
+        "订单放量",
+        "价格上涨",
+        "价格上行",
+        "价格抬升",
+        "价格回落",
+        "价格下行",
+        "预期上修",
+        "预期提升",
+        "预期改善",
+        "逻辑强化",
+        "逻辑改善",
+        "商业化提速",
+        "商业化改善",
+        "商业化落地",
+        "效率提升",
+        "效率改善",
+        "受益",
+        "承压",
+        "走强",
+        "改善",
+        "提升",
+        "加速",
+        "扩容",
+        "上涨",
+        "下跌",
+        "回落",
+        "收缩",
+        "紧张",
+        "强化",
+        "提速",
+        "增加",
+        "上修",
+        "升温",
+        "抬升",
+    )
+    GENERIC_TARGET_LABELS = {
+        "科技",
+        "ai",
+        "人工智能",
+        "算力",
+        "半导体",
+        "机器人",
+        "数据中心",
+        "应用层",
+        "云厂商",
+        "功耗密度",
+        "通胀预期",
+        "市场风险偏好",
+        "成长制造",
+        "机房效率",
+        "推理成本",
+        "商业化",
+        "资本开支",
+        "ai集群",
+        "ai集群建设",
+        "ai集群扩容",
+    }
+    DEFAULT_STAGED_SECTIONS = [
+        "report_overview",
+        "key_message_impacts",
+        "portfolio_summary",
+    ]
+    VALID_STAGED_SECTIONS = set(DEFAULT_STAGED_SECTIONS)
 
     def __init__(
         self,
@@ -78,11 +163,26 @@ class AIAnalyzer:
         self.include_rank_timeline = analysis_config.get("INCLUDE_RANK_TIMELINE", False)
         self.include_standalone = analysis_config.get("INCLUDE_STANDALONE", False)
         self.language = analysis_config.get("LANGUAGE", "Chinese")
+        self.staged_mode = analysis_config.get("STAGED_MODE", False)
+        configured_staged_sections = analysis_config.get(
+            "STAGED_SECTIONS",
+            self.DEFAULT_STAGED_SECTIONS,
+        )
+        if not isinstance(configured_staged_sections, list):
+            configured_staged_sections = self.DEFAULT_STAGED_SECTIONS
+        self.staged_sections = [
+            section
+            for section in configured_staged_sections
+            if section in self.VALID_STAGED_SECTIONS
+        ] or list(self.DEFAULT_STAGED_SECTIONS)
 
         # 加载提示词模板
         self.system_prompt, self.user_prompt_template = load_prompt_template(
             analysis_config.get("PROMPT_FILE", "ai_analysis_prompt.txt"),
             label="AI",
+        )
+        self.portfolio_holding_codes, self.portfolio_holding_names = self._extract_portfolio_holdings(
+            self.user_prompt_template,
         )
 
     def analyze(
@@ -134,7 +234,7 @@ class AIAnalyzer:
             )
 
         # 准备新闻内容并获取统计数据
-        news_content, rss_content, hotlist_total, rss_total, analyzed_count = self._prepare_news_content(stats, rss_stats)
+        news_content, rss_content, hotlist_total, rss_total, analyzed_count, message_catalog = self._prepare_news_content(stats, rss_stats)
         total_news = hotlist_total + rss_total
 
         if not news_content and not rss_content:
@@ -188,19 +288,15 @@ class AIAnalyzer:
 
         # 调用 AI API（使用 LiteLLM）
         try:
-            response = self._call_ai(user_prompt)
-            result = self._parse_response(response)
-
-            # JSON 解析失败时的重试兜底（仅重试一次）
-            if result.error and "JSON 解析错误" in result.error:
-                print(f"[AI] JSON 解析失败，尝试让 AI 修复...")
-                retry_result = self._retry_fix_json(response, result.error)
-                if retry_result and retry_result.success and not retry_result.error:
-                    print("[AI] JSON 修复成功")
-                    retry_result.raw_response = response
-                    result = retry_result
-                else:
-                    print("[AI] JSON 修复失败，使用原始文本兜底")
+            if self.staged_mode:
+                print(f"[AI] 启用分板块分析: {', '.join(self.staged_sections)}")
+                try:
+                    result = self._analyze_in_stages(user_prompt)
+                except Exception as stage_error:
+                    print(f"[AI] 分板块分析失败，回退单次调用: {stage_error}")
+                    result = self._execute_analysis_prompt(user_prompt)
+            else:
+                result = self._execute_analysis_prompt(user_prompt)
 
             # 如果配置未启用 RSS 分析，清空 national_layer 中的 RSS 相关内容（如果 AI 返回了的话）
             # 注：v3.0.0 中 RSS 内容已整合到 national_layer，不再有独立的 rss_insights 字段
@@ -208,12 +304,27 @@ class AIAnalyzer:
             # 如果配置未启用 standalone 分析，清空 social_layer 中的独立展示区相关容
             # 注：v3.0.0 中 standalone 已整合到 social_layer，不再有独立的 standalone_summaries 字段
 
+            # 将编号映射回原始消息，便于渲染时展示标题和来源
+            selected_impacts = result.key_message_impacts or result.message_impacts
+            selected_impacts = self._enrich_message_impacts(
+                selected_impacts,
+                message_catalog,
+            )
+            result.key_message_impacts = selected_impacts
+            result.message_impacts = selected_impacts
+            result.portfolio_summary = self._normalize_portfolio_summary(
+                result.portfolio_summary,
+                selected_impacts,
+                message_catalog,
+            )
+
             # 填充统计数据
             result.total_news = total_news
             result.hotlist_count = hotlist_total
             result.rss_count = rss_total
             result.analyzed_news = analyzed_count
             result.max_news_limit = self.max_news
+            result.ai_mode = report_mode
             return result
         except Exception as e:
             error_type = type(e).__name__
@@ -229,6 +340,120 @@ class AIAnalyzer:
                 error=friendly_msg
             )
 
+    def _execute_analysis_prompt(self, user_prompt: str) -> AIAnalysisResult:
+        """执行一次分析提示词调用，并在必要时尝试修复 JSON。"""
+        response = self._call_ai(user_prompt)
+        result = self._parse_response(response)
+
+        if result.error and "JSON 解析错误" in result.error:
+            print(f"[AI] JSON 解析失败，尝试让 AI 修复...")
+            retry_result = self._retry_fix_json(response, result.error)
+            if retry_result and retry_result.success and not retry_result.error:
+                print("[AI] JSON 修复成功")
+                retry_result.raw_response = response
+                return retry_result
+            print("[AI] JSON 修复失败，使用原始文本兜底")
+
+        return result
+
+    def _analyze_in_stages(self, base_user_prompt: str) -> AIAnalysisResult:
+        """按板块分阶段调用模型，并聚合结果。"""
+        merged_result = AIAnalysisResult(success=True)
+        stage_context: Dict[str, Any] = {}
+        raw_parts = []
+
+        for index, section in enumerate(self.staged_sections, start=1):
+            print(f"[AI] 分板块 {index}/{len(self.staged_sections)}: {section}")
+            stage_prompt = self._build_stage_prompt(base_user_prompt, section, stage_context)
+            stage_result = self._execute_analysis_prompt(stage_prompt)
+
+            if not stage_result.success:
+                raise RuntimeError(stage_result.error or f"{section} 阶段失败")
+
+            raw_parts.append(f"[{section}]\n{stage_result.raw_response}")
+            self._merge_stage_result(merged_result, stage_result, section)
+            stage_context = self._build_stage_context(merged_result)
+
+        merged_result.raw_response = "\n\n".join(raw_parts)
+        return merged_result
+
+    def _build_stage_prompt(
+        self,
+        base_user_prompt: str,
+        section: str,
+        stage_context: Dict[str, Any],
+    ) -> str:
+        """在基础提示词上叠加板块级约束。"""
+        stage_instructions = {
+            "report_overview": (
+                "当前只生成 report_overview。"
+                "只返回 JSON 对象 {\"report_overview\": \"...\"}。"
+                "不要返回 key_message_impacts、portfolio_summary 或其他字段。"
+            ),
+            "key_message_impacts": (
+                "当前只生成 key_message_impacts。"
+                "只返回 JSON 对象 {\"key_message_impacts\": [...]}。"
+                "每条必须包含 id、industry、core_view、direct_chain、indirect_chain。"
+                "不要返回 report_overview、portfolio_summary 或其他字段。"
+            ),
+            "portfolio_summary": (
+                "当前只生成 portfolio_summary。"
+                "只返回 JSON 对象 {\"portfolio_summary\": {...}}。"
+                "持仓内只能用 加仓/减仓/卖出；持仓外只能用 买入/观望。"
+                "持仓外方向必须来自热点高影响消息或其直接产业链，不得使用持仓表中已有标的。"
+                "不要返回 report_overview、key_message_impacts 或其他字段。"
+            ),
+        }
+
+        prompt_parts = [base_user_prompt.rstrip()]
+        if stage_context:
+            prompt_parts.extend(
+                [
+                    "",
+                    "### 已完成板块（仅用于保持一致，不要原样复述）",
+                    json.dumps(stage_context, ensure_ascii=False, indent=2),
+                ]
+            )
+        prompt_parts.extend(
+            [
+                "",
+                "### 当前分板块任务",
+                stage_instructions.get(section, "只返回当前板块对应的 JSON。"),
+            ]
+        )
+        return "\n".join(prompt_parts)
+
+    def _merge_stage_result(
+        self,
+        merged_result: AIAnalysisResult,
+        stage_result: AIAnalysisResult,
+        section: str,
+    ) -> None:
+        """将单板块结果合并到总结果。"""
+        if section == "report_overview" and stage_result.report_overview:
+            merged_result.report_overview = stage_result.report_overview
+        elif section == "key_message_impacts":
+            merged_result.key_message_impacts = stage_result.key_message_impacts or stage_result.message_impacts
+            merged_result.message_impacts = merged_result.key_message_impacts
+        elif section == "portfolio_summary" and stage_result.portfolio_summary:
+            merged_result.portfolio_summary = stage_result.portfolio_summary
+
+        if stage_result.error and not merged_result.error:
+            merged_result.error = stage_result.error
+        if stage_result.skipped:
+            merged_result.skipped = True
+
+    def _build_stage_context(self, result: AIAnalysisResult) -> Dict[str, Any]:
+        """提取已完成板块，供后续阶段参考。"""
+        context: Dict[str, Any] = {}
+        if result.report_overview:
+            context["report_overview"] = result.report_overview
+        if result.key_message_impacts:
+            context["key_message_impacts"] = result.key_message_impacts
+        if result.portfolio_summary:
+            context["portfolio_summary"] = result.portfolio_summary
+        return context
+
     def _prepare_news_content(
         self,
         stats: List[Dict],
@@ -241,12 +466,15 @@ class AIAnalyzer:
         RSS 包含：来源、标题、发布时间
 
         Returns:
-            tuple: (news_content, rss_content, hotlist_total, rss_total, analyzed_count)
+            tuple: (news_content, rss_content, hotlist_total, rss_total, analyzed_count, message_catalog)
         """
         news_lines = []
         rss_lines = []
+        message_catalog = []
         news_count = 0
         rss_count = 0
+        hotlist_message_index = 1
+        rss_message_index = 1
 
         # 计算总新闻数
         hotlist_total = sum(len(s.get("titles", [])) for s in stats) if stats else 0
@@ -258,7 +486,7 @@ class AIAnalyzer:
                 word = stat.get("word", "")
                 titles = stat.get("titles", [])
                 if word and titles:
-                    news_lines.append(f"\n**{word}** ({len(titles)}条)")
+                    news_lines.append(f"\n关键词: {word} ({len(titles)}条)")
                     for t in titles:
                         if not isinstance(t, dict):
                             continue
@@ -268,12 +496,13 @@ class AIAnalyzer:
 
                         # 来源
                         source = t.get("source_name", t.get("source", ""))
+                        message_id = f"H{hotlist_message_index:03d}"
 
                         # 构建行
                         if source:
-                            line = f"- [{source}] {title}"
+                            line = f"- {message_id} | [{source}] {title}"
                         else:
-                            line = f"- {title}"
+                            line = f"- {message_id} | {title}"
 
                         # 始终显示简化格式：排名范围 + 时间范围 + 出现次数
                         ranks = t.get("ranks", [])
@@ -299,7 +528,17 @@ class AIAnalyzer:
                             line += f" | 轨迹:{timeline_str}"
 
                         news_lines.append(line)
+                        message_catalog.append(
+                            {
+                                "id": message_id,
+                                "title": title,
+                                "source": source,
+                                "source_type": "hotlist",
+                                "keyword": word,
+                            }
+                        )
 
+                        hotlist_message_index += 1
                         news_count += 1
                         if news_count >= self.max_news:
                             break
@@ -315,7 +554,7 @@ class AIAnalyzer:
                 word = stat.get("word", "")
                 titles = stat.get("titles", [])
                 if word and titles:
-                    rss_lines.append(f"\n**{word}** ({len(titles)}条)")
+                    rss_lines.append(f"\n主题: {word} ({len(titles)}条)")
                     for t in titles:
                         if not isinstance(t, dict):
                             continue
@@ -325,19 +564,30 @@ class AIAnalyzer:
 
                         # 来源
                         source = t.get("source_name", t.get("feed_name", ""))
+                        message_id = f"R{rss_message_index:03d}"
 
                         # 发布时间
                         time_display = t.get("time_display", "")
 
-                        # 构建行：[来源] 标题 | 发布时间
+                        # 构建行：编号 | [来源] 标题 | 发布时间
                         if source:
-                            line = f"- [{source}] {title}"
+                            line = f"- {message_id} | [{source}] {title}"
                         else:
-                            line = f"- {title}"
+                            line = f"- {message_id} | {title}"
                         if time_display:
                             line += f" | {time_display}"
                         rss_lines.append(line)
+                        message_catalog.append(
+                            {
+                                "id": message_id,
+                                "title": title,
+                                "source": source,
+                                "source_type": "rss",
+                                "keyword": word,
+                            }
+                        )
 
+                        rss_message_index += 1
                         rss_count += 1
                         if rss_count >= remaining:
                             break
@@ -346,7 +596,363 @@ class AIAnalyzer:
         rss_content = "\n".join(rss_lines) if rss_lines else ""
         total_count = news_count + rss_count
 
-        return news_content, rss_content, hotlist_total, rss_total, total_count
+        return news_content, rss_content, hotlist_total, rss_total, total_count, message_catalog
+
+    def _extract_portfolio_holdings(self, prompt_template: str) -> tuple[set[str], set[str]]:
+        """从提示词中的内嵌持仓表提取持仓代码与名称。"""
+        codes = set()
+        names = set()
+
+        if not prompt_template:
+            return codes, names
+
+        for raw_line in prompt_template.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("|"):
+                continue
+
+            match = re.match(r"^\|\s*([A-Z0-9-]+)\s*\|\s*([^|]+?)\s*\|", line)
+            if not match:
+                continue
+
+            code = match.group(1).strip()
+            name = match.group(2).strip()
+            if code == "代码" or name == "名称":
+                continue
+
+            normalized_code = self._normalize_text(code)
+            normalized_name = self._normalize_text(name)
+            if normalized_code:
+                codes.add(normalized_code)
+            if normalized_name:
+                names.add(normalized_name)
+
+        return codes, names
+
+    def _normalize_text(self, value: str) -> str:
+        """将文本标准化，便于做代码/名称匹配。"""
+        if not value:
+            return ""
+        return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value.lower())
+
+    def _iter_text_values(self, value: Any) -> List[str]:
+        """将候选值统一展开为文本列表。"""
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        if isinstance(value, (list, tuple, set)):
+            texts = []
+            for item in value:
+                if not isinstance(item, str):
+                    continue
+                text = item.strip()
+                if text:
+                    texts.append(text)
+            return texts
+        return []
+
+    def _extract_chain_segments(self, chain_text: str) -> List[str]:
+        """从传导链中拆出可用于匹配的关键节点。"""
+        if not isinstance(chain_text, str) or not chain_text.strip():
+            return []
+
+        segments = []
+        for raw_part in re.split(r"\s*(?:->|→|=>|➡|⟶)\s*|\n+", chain_text):
+            part = raw_part.strip(" ：:;；，,。.()（）[]【】")
+            if part:
+                segments.append(part)
+        return segments
+
+    def _clean_chain_target(self, value: str) -> str:
+        """去掉链条末端的状态描述，只保留更像标的的名词短语。"""
+        text = value.strip(" ：:;；，,。.()（）[]【】")
+        for suffix in self.CHAIN_TARGET_SUFFIXES:
+            if text.endswith(suffix):
+                text = text[: -len(suffix)].strip(" ：:;；，,。.()（）[]【】")
+                break
+        return text
+
+    def _looks_like_tradeable_target(self, value: str) -> bool:
+        """用轻量启发式过滤明显不是可交易方向的过程描述。"""
+        normalized_value = self._normalize_text(value)
+        if len(normalized_value) < 2:
+            return False
+        if normalized_value in {self._normalize_text(item) for item in self.GENERIC_TARGET_LABELS}:
+            return False
+        if normalized_value.endswith((
+            self._normalize_text("需求"),
+            self._normalize_text("预期"),
+            self._normalize_text("成本"),
+            self._normalize_text("价格"),
+            self._normalize_text("效率"),
+            self._normalize_text("商业化"),
+        )):
+            return False
+        return True
+
+    def _extract_terminal_chain_targets(self, chain_text: str) -> List[str]:
+        """从直接传导链的末端提取更像细分标的的方向。"""
+        segments = self._extract_chain_segments(chain_text)
+        if not segments:
+            return []
+
+        terminal_segment = self._clean_chain_target(segments[-1])
+        if not terminal_segment:
+            return []
+
+        targets = []
+        seen = set()
+        for raw_target in re.split(r"\s*(?:和|及|与|、|,|，)\s*", terminal_segment):
+            target = raw_target.strip(" ：:;；，,。.()（）[]【】")
+            normalized_target = self._normalize_text(target)
+            if not normalized_target or normalized_target in seen:
+                continue
+            if not self._looks_like_tradeable_target(target):
+                continue
+            seen.add(normalized_target)
+            targets.append(target)
+
+        return targets
+
+    def _collect_priority_targets(self, item: Dict[str, Any]) -> List[str]:
+        """收集单条高影响消息中的优先细分方向。"""
+        targets = []
+        seen = set()
+
+        def add_target(value: str) -> None:
+            normalized_value = self._normalize_text(value)
+            if not normalized_value or normalized_value in seen:
+                return
+            seen.add(normalized_value)
+            targets.append(value.strip())
+
+        for field in ("related_targets", "trade_expression"):
+            for value in self._iter_text_values(item.get(field)):
+                add_target(value)
+
+        for value in self._extract_terminal_chain_targets(item.get("direct_chain", "")):
+            add_target(value)
+
+        industry = item.get("industry", "")
+        if (
+            isinstance(industry, str)
+            and industry.strip()
+            and self._looks_like_tradeable_target(industry)
+        ):
+            add_target(industry)
+
+        return targets
+
+    def _is_portfolio_holding_target(self, target: str) -> bool:
+        """判断目标是否属于当前持仓。"""
+        normalized_target = self._normalize_text(target)
+        if not normalized_target:
+            return False
+        return (
+            normalized_target in self.portfolio_holding_codes
+            or normalized_target in self.portfolio_holding_names
+        )
+
+    def _collect_hot_direction_candidates(
+        self,
+        key_message_impacts: List[Dict[str, Any]],
+        message_catalog: List[Dict[str, Any]],
+    ) -> List[str]:
+        """收集可用于持仓外方向校验的热点候选文本。"""
+        candidates = []
+        seen = set()
+
+        def add_candidate(value: str) -> None:
+            normalized_value = self._normalize_text(value)
+            if not normalized_value or normalized_value in seen:
+                return
+            seen.add(normalized_value)
+            candidates.append(value.strip())
+
+        for item in key_message_impacts:
+            if not isinstance(item, dict):
+                continue
+            add_candidate(item.get("industry", ""))
+            add_candidate(item.get("title", ""))
+            add_candidate(item.get("keyword", ""))
+            for value in self._iter_text_values(item.get("related_targets")):
+                add_candidate(value)
+            add_candidate(item.get("trade_expression", ""))
+            for value in self._extract_terminal_chain_targets(item.get("direct_chain", "")):
+                add_candidate(value)
+
+        for item in message_catalog:
+            if not isinstance(item, dict):
+                continue
+            add_candidate(item.get("keyword", ""))
+            add_candidate(item.get("title", ""))
+
+        return candidates
+
+    def _is_hot_derived_target(self, target: str, candidates: List[str]) -> bool:
+        """判断持仓外方向是否可从热点消息文本中导出。"""
+        normalized_target = self._normalize_text(target)
+        if not normalized_target:
+            return False
+
+        for candidate in candidates:
+            normalized_candidate = self._normalize_text(candidate)
+            if not normalized_candidate:
+                continue
+            if (
+                normalized_candidate in normalized_target
+                or normalized_target in normalized_candidate
+            ):
+                return True
+        return False
+
+    def _build_hot_watch_fallback(
+        self,
+        key_message_impacts: List[Dict[str, Any]],
+        candidates: List[str],
+    ) -> List[Dict[str, Any]]:
+        """当模型未给出合规的持仓外方向时，从热点高影响消息回退生成观望项。"""
+        for item in key_message_impacts:
+            if not isinstance(item, dict):
+                continue
+
+            for target in self._collect_priority_targets(item):
+                if self._is_portfolio_holding_target(target):
+                    continue
+                if not self._is_hot_derived_target(target, candidates):
+                    continue
+
+                return [
+                    {
+                        "target": target,
+                        "rating": "观望",
+                        "reason": "由热点消息提炼的持仓外细分方向，当前先保留观察评级，等待进一步催化确认。",
+                    }
+                ]
+
+        return []
+
+    def _normalize_portfolio_summary(
+        self,
+        portfolio_summary: Dict[str, Any],
+        key_message_impacts: List[Dict[str, Any]],
+        message_catalog: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """校验并修正持仓内外评级，避免模型把持仓内标的写入持仓外。"""
+        if not isinstance(portfolio_summary, dict):
+            return portfolio_summary
+
+        normalized_summary = dict(portfolio_summary)
+        hot_candidates = self._collect_hot_direction_candidates(
+            key_message_impacts,
+            message_catalog,
+        )
+
+        in_actions = []
+        for item in normalized_summary.get("in_portfolio_actions", []):
+            if not isinstance(item, dict):
+                continue
+
+            code = item.get("code", "")
+            name = item.get("name", "")
+            target_text = code or name
+            rating = item.get("rating", "")
+            if not self._is_portfolio_holding_target(target_text):
+                continue
+            if rating not in self.IN_PORTFOLIO_RATINGS:
+                continue
+
+            normalized_item = dict(item)
+            normalized_item["code"] = code.strip()
+            normalized_item["name"] = name.strip()
+            in_actions.append(normalized_item)
+
+        out_actions = []
+        for item in normalized_summary.get("out_of_portfolio_actions", []):
+            if not isinstance(item, dict):
+                continue
+
+            target = item.get("target", "")
+            rating = item.get("rating", "")
+            if not target:
+                continue
+            if not self._looks_like_tradeable_target(target):
+                continue
+            if self._is_portfolio_holding_target(target):
+                continue
+            if not self._is_hot_derived_target(target, hot_candidates):
+                continue
+            if rating not in self.OUT_OF_PORTFOLIO_RATINGS:
+                rating = "观望"
+
+            normalized_item = dict(item)
+            normalized_item["target"] = target.strip()
+            normalized_item["rating"] = rating
+            out_actions.append(normalized_item)
+
+        if not out_actions:
+            out_actions = self._build_hot_watch_fallback(
+                key_message_impacts,
+                hot_candidates,
+            )
+
+        normalized_summary["in_portfolio_actions"] = in_actions
+        normalized_summary["out_of_portfolio_actions"] = out_actions
+        return normalized_summary
+
+    def _enrich_message_impacts(
+        self,
+        message_impacts: List[Dict[str, Any]],
+        message_catalog: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """将 AI 返回的编号映射回原始消息标题与来源。"""
+        if not message_impacts:
+            return []
+
+        catalog_by_id = {
+            item.get("id", ""): item
+            for item in message_catalog
+            if item.get("id")
+        }
+        catalog_order = {
+            item.get("id", ""): index
+            for index, item in enumerate(message_catalog)
+            if item.get("id")
+        }
+
+        enriched_impacts = []
+        seen_ids = set()
+        for item in message_impacts:
+            if not isinstance(item, dict):
+                continue
+
+            normalized_item = {}
+            for key, value in item.items():
+                if value is None:
+                    continue
+                if isinstance(value, str):
+                    value = value.strip()
+                normalized_item[key] = value
+
+            impact_id = normalized_item.get("id", "")
+            if impact_id in seen_ids:
+                continue
+            if impact_id:
+                seen_ids.add(impact_id)
+
+            catalog_item = catalog_by_id.get(impact_id)
+            if catalog_item:
+                normalized_item.setdefault("title", catalog_item.get("title", ""))
+                normalized_item.setdefault("source", catalog_item.get("source", ""))
+                normalized_item.setdefault("source_type", catalog_item.get("source_type", ""))
+                normalized_item.setdefault("keyword", catalog_item.get("keyword", ""))
+
+            enriched_impacts.append(normalized_item)
+
+        enriched_impacts.sort(
+            key=lambda item: catalog_order.get(item.get("id", ""), len(catalog_order))
+        )
+        return enriched_impacts
 
     def _call_ai(self, user_prompt: str) -> str:
         """调用 AI API（使用 LiteLLM）"""
@@ -465,7 +1071,7 @@ class AIAnalyzer:
             if not items:
                 continue
 
-            lines.append(f"### [{platform_name}]")
+            lines.append(f"平台: [{platform_name}]")
             for item in items:
                 title = item.get("title", "")
                 if not title:
@@ -511,7 +1117,7 @@ class AIAnalyzer:
             if not items:
                 continue
 
-            lines.append(f"### [{feed_name}]")
+            lines.append(f"RSS源: [{feed_name}]")
             for item in items:
                 title = item.get("title", "")
                 if not title:
@@ -555,6 +1161,7 @@ class AIAnalyzer:
         json_str = json_str.strip()
         if not json_str:
             result.error = "提取的 JSON 内容为空"
+            result.report_overview = response[:500] + "..." if len(response) > 500 else response
             result.personal_layer = response[:500] + "..." if len(response) > 500 else response
             result.success = True
             return result
@@ -589,12 +1196,27 @@ class AIAnalyzer:
             else:
                 result.error = "JSON 解析失败"
             # 兜底：使用已提取的 json_str（不含 markdown 标记），避免推送中出现 ```json
+            result.report_overview = json_str[:500] + "..." if len(json_str) > 500 else json_str
             result.personal_layer = json_str[:500] + "..." if len(json_str) > 500 else json_str
             result.success = True
             return result
 
-        # 解析成功，提取字段 (v3.1.0 新结构)
+        # 解析成功，提取字段 (v3.3.0 研报结构 + 旧结构兼容)
         try:
+            key_message_impacts = data.get("key_message_impacts")
+            if isinstance(key_message_impacts, list):
+                result.key_message_impacts = [
+                    item for item in key_message_impacts if isinstance(item, dict)
+                ]
+            else:
+                message_impacts = data.get("message_impacts", [])
+                if isinstance(message_impacts, list):
+                    result.key_message_impacts = [
+                        item for item in message_impacts if isinstance(item, dict)
+                    ]
+
+            result.report_overview = data.get("report_overview", "")
+
             result.personal_layer = data.get("personal_layer", "")
             result.regional_layer = data.get("regional_layer", "")
             result.social_layer = data.get("social_layer", "")
@@ -612,6 +1234,7 @@ class AIAnalyzer:
             result.success = True
         except (KeyError, TypeError, AttributeError) as e:
             result.error = f"字段提取错误: {type(e).__name__}: {e}"
+            result.report_overview = json_str[:500] + "..." if len(json_str) > 500 else json_str
             result.personal_layer = json_str[:500] + "..." if len(json_str) > 500 else json_str
             result.success = True
 
