@@ -9,10 +9,13 @@ AI 分析器模块
 import json
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Optional
 
 from trendradar.ai.client import AIClient
+from trendradar.ai.portfolio_market import build_portfolio_market_snapshot
 from trendradar.ai.prompt_loader import load_prompt_template
+from trendradar.ai.technical_analysis import build_portfolio_technical_snapshot
 
 
 @dataclass
@@ -127,6 +130,22 @@ class AIAnalyzer:
         "portfolio_summary",
     ]
     VALID_STAGED_SECTIONS = set(DEFAULT_STAGED_SECTIONS)
+    MARKET_SUMMARY_KEYWORDS = {
+        "科技",
+        "港股",
+        "宽松",
+        "预期",
+        "反弹",
+        "分化",
+        "地缘",
+        "风险偏好",
+        "高股息",
+        "成长",
+        "避险",
+        "降息",
+        "油气",
+        "黄金",
+    }
 
     def __init__(
         self,
@@ -162,8 +181,26 @@ class AIAnalyzer:
         self.include_rss = analysis_config.get("INCLUDE_RSS", True)
         self.include_rank_timeline = analysis_config.get("INCLUDE_RANK_TIMELINE", False)
         self.include_standalone = analysis_config.get("INCLUDE_STANDALONE", False)
+        self.enable_portfolio_market_snapshot = analysis_config.get(
+            "ENABLE_PORTFOLIO_MARKET_SNAPSHOT",
+            True,
+        )
+        self.enable_portfolio_technical_snapshot = analysis_config.get(
+            "ENABLE_PORTFOLIO_TECHNICAL_SNAPSHOT",
+            False,
+        )
         self.language = analysis_config.get("LANGUAGE", "Chinese")
         self.staged_mode = analysis_config.get("STAGED_MODE", False)
+        self.mcp_runtime_config = None
+        if analysis_config.get("ENABLE_MCP", False):
+            self.mcp_runtime_config = {
+                "ENABLED": True,
+                "API_KEY": self.client.api_key or self.ai_config.get("API_KEY", ""),
+                "API_HOST": analysis_config.get("MCP_API_HOST", ""),
+                "CONFIG_FILE": analysis_config.get("MCP_CONFIG_FILE", ""),
+                "SERVERS": analysis_config.get("MCP_SERVERS", ["MiniMax"]),
+                "MAX_TOOL_ROUNDS": analysis_config.get("MCP_MAX_TOOL_ROUNDS", 4),
+            }
         configured_staged_sections = analysis_config.get(
             "STAGED_SECTIONS",
             self.DEFAULT_STAGED_SECTIONS,
@@ -180,6 +217,9 @@ class AIAnalyzer:
         self.system_prompt, self.user_prompt_template = load_prompt_template(
             analysis_config.get("PROMPT_FILE", "ai_analysis_prompt.txt"),
             label="AI",
+        )
+        self.portfolio_holdings = self._extract_portfolio_holding_rows(
+            self.user_prompt_template,
         )
         self.portfolio_holding_codes, self.portfolio_holding_names = self._extract_portfolio_holdings(
             self.user_prompt_template,
@@ -258,6 +298,14 @@ class AIAnalyzer:
 
         # 使用安全的字符串替换，避免模板中其他花括号（如 JSON 示例）被误解析
         user_prompt = self.user_prompt_template
+        portfolio_market_snapshot = self._build_portfolio_market_snapshot()
+        portfolio_market_snapshot_text = self._resolve_portfolio_market_snapshot_text(
+            portfolio_market_snapshot,
+        )
+        portfolio_technical_snapshot = self._build_portfolio_technical_snapshot()
+        portfolio_technical_snapshot_text = self._resolve_portfolio_technical_snapshot_text(
+            portfolio_technical_snapshot,
+        )
         user_prompt = user_prompt.replace("{report_mode}", report_mode)
         user_prompt = user_prompt.replace("{report_type}", report_type)
         user_prompt = user_prompt.replace("{current_time}", current_time)
@@ -268,6 +316,14 @@ class AIAnalyzer:
         user_prompt = user_prompt.replace("{news_content}", news_content)
         user_prompt = user_prompt.replace("{rss_content}", rss_content)
         user_prompt = user_prompt.replace("{language}", self.language)
+        user_prompt = user_prompt.replace(
+            "{portfolio_market_snapshot}",
+            portfolio_market_snapshot_text,
+        )
+        user_prompt = user_prompt.replace(
+            "{portfolio_technical_snapshot}",
+            portfolio_technical_snapshot_text,
+        )
 
         # 构建独立展示区内容
         standalone_content = ""
@@ -316,6 +372,9 @@ class AIAnalyzer:
                 result.portfolio_summary,
                 selected_impacts,
                 message_catalog,
+                portfolio_market_snapshot=portfolio_market_snapshot,
+                portfolio_technical_snapshot=portfolio_technical_snapshot,
+                report_overview=result.report_overview,
             )
 
             # 填充统计数据
@@ -611,7 +670,7 @@ class AIAnalyzer:
             if not line.startswith("|"):
                 continue
 
-            match = re.match(r"^\|\s*([A-Z0-9-]+)\s*\|\s*([^|]+?)\s*\|", line)
+            match = re.match(r"^\|\s*([A-Za-z0-9.\-]+)\s*\|\s*([^|]+?)\s*\|", line)
             if not match:
                 continue
 
@@ -628,6 +687,40 @@ class AIAnalyzer:
                 names.add(normalized_name)
 
         return codes, names
+
+    def _extract_portfolio_holding_rows(self, prompt_template: str) -> List[Dict[str, Any]]:
+        """从提示词中的内嵌持仓表提取代码、名称和仓位。"""
+        holdings = []
+
+        if not prompt_template:
+            return holdings
+
+        for raw_line in prompt_template.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("|"):
+                continue
+
+            parts = [part.strip() for part in line.strip("|").split("|")]
+            if len(parts) < 3:
+                continue
+
+            code, name, weight_text = parts[:3]
+            if code == "代码" or name == "名称":
+                continue
+
+            weight_match = re.search(r"(\d+(?:\.\d+)?)%", weight_text)
+            if not weight_match:
+                continue
+
+            holdings.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "weight_pct": float(weight_match.group(1)),
+                }
+            )
+
+        return holdings
 
     def _normalize_text(self, value: str) -> str:
         """将文本标准化，便于做代码/名称匹配。"""
@@ -812,31 +905,308 @@ class AIAnalyzer:
         candidates: List[str],
     ) -> List[Dict[str, Any]]:
         """当模型未给出合规的持仓外方向时，从热点高影响消息回退生成观望项。"""
+        fallback_items = []
+        seen_targets = set()
+
         for item in key_message_impacts:
             if not isinstance(item, dict):
                 continue
 
             for target in self._collect_priority_targets(item):
+                normalized_target = self._normalize_text(target)
+                if not normalized_target or normalized_target in seen_targets:
+                    continue
                 if self._is_portfolio_holding_target(target):
                     continue
                 if not self._is_hot_derived_target(target, candidates):
                     continue
 
-                return [
+                seen_targets.add(normalized_target)
+                fallback_items.append(
                     {
                         "target": target,
                         "rating": "观望",
                         "reason": "由热点消息提炼的持仓外细分方向，当前先保留观察评级，等待进一步催化确认。",
                     }
-                ]
+                )
+                if len(fallback_items) >= 3:
+                    return fallback_items
+                break
 
-        return []
+        return fallback_items
+
+    def _build_portfolio_market_snapshot(self) -> Dict[str, Any]:
+        """Build a lightweight market snapshot for the embedded holdings table."""
+        if not self.enable_portfolio_market_snapshot:
+            return {
+                "prompt_text": "代理行情快照已关闭，请不要编造当日收益数字，只做定性分析。",
+            }
+        try:
+            return build_portfolio_market_snapshot(self.portfolio_holdings)
+        except Exception:
+            return {
+                "prompt_text": "代理行情快照暂不可用，请不要编造当日收益数字，只做定性分析。",
+            }
+
+    def _build_portfolio_technical_snapshot(self) -> Dict[str, Any]:
+        """Build a lightweight technical snapshot for the embedded holdings table."""
+        if not self.enable_portfolio_technical_snapshot:
+            return {
+                "prompt_text": "技术面快照已关闭，请不要编造道氏趋势或缠论买卖点，只做定性观察。",
+            }
+        try:
+            return build_portfolio_technical_snapshot(self.portfolio_holdings)
+        except Exception:
+            return {
+                "prompt_text": "技术面快照暂不可用，请不要编造道氏趋势或缠论买卖点，只做定性观察。",
+            }
+
+    def _resolve_portfolio_market_snapshot_text(self, snapshot: Any) -> str:
+        """Resolve prompt text from a snapshot payload or test double."""
+        if isinstance(snapshot, str):
+            return snapshot
+        if isinstance(snapshot, dict):
+            prompt_text = snapshot.get("prompt_text", "")
+            if isinstance(prompt_text, str) and prompt_text.strip():
+                return prompt_text.strip()
+        return "代理行情快照暂不可用，请不要编造当日收益数字，只做定性分析。"
+
+    def _resolve_portfolio_technical_snapshot_text(self, snapshot: Any) -> str:
+        """Resolve prompt text from a technical snapshot payload or test double."""
+        if isinstance(snapshot, str):
+            return snapshot
+        if isinstance(snapshot, dict):
+            prompt_text = snapshot.get("prompt_text", "")
+            if isinstance(prompt_text, str) and prompt_text.strip():
+                return prompt_text.strip()
+        return "技术面快照暂不可用，请不要编造道氏趋势或缠论买卖点，只做定性观察。"
+
+    def _merge_portfolio_market_snapshot(
+        self,
+        portfolio_summary: Dict[str, Any],
+        portfolio_market_snapshot: Any,
+    ) -> Dict[str, Any]:
+        """Merge factual portfolio market context into the final summary."""
+        if not isinstance(portfolio_summary, dict):
+            return portfolio_summary
+        if not isinstance(portfolio_market_snapshot, dict):
+            return portfolio_summary
+
+        merged_summary = dict(portfolio_summary)
+        daily_performance = portfolio_market_snapshot.get("daily_performance")
+        if isinstance(daily_performance, dict) and daily_performance:
+            merged_summary["daily_performance"] = daily_performance
+
+        if not merged_summary.get("market_summary"):
+            market_summary = portfolio_market_snapshot.get("market_summary")
+            if isinstance(market_summary, str) and market_summary.strip():
+                merged_summary["market_summary"] = market_summary.strip()
+
+        if not merged_summary.get("holding_notes"):
+            holding_notes = portfolio_market_snapshot.get("holding_notes")
+            if isinstance(holding_notes, list) and holding_notes:
+                merged_summary["holding_notes"] = holding_notes
+
+        return merged_summary
+
+    def _merge_portfolio_technical_snapshot(
+        self,
+        portfolio_summary: Dict[str, Any],
+        portfolio_technical_snapshot: Any,
+    ) -> Dict[str, Any]:
+        """Merge technical portfolio context into the final summary."""
+        if not isinstance(portfolio_summary, dict):
+            return portfolio_summary
+        if not isinstance(portfolio_technical_snapshot, dict):
+            return portfolio_summary
+
+        merged_summary = dict(portfolio_summary)
+
+        if not merged_summary.get("market_summary"):
+            holding_view_summary = portfolio_technical_snapshot.get("holding_view_summary")
+            if isinstance(holding_view_summary, str) and holding_view_summary.strip():
+                merged_summary["market_summary"] = holding_view_summary.strip()
+
+        if not merged_summary.get("technical_summary"):
+            technical_summary = portfolio_technical_snapshot.get("technical_summary")
+            if isinstance(technical_summary, str) and technical_summary.strip():
+                merged_summary["technical_summary"] = technical_summary.strip()
+
+        if not merged_summary.get("technical_signals"):
+            technical_signals = portfolio_technical_snapshot.get("technical_signals")
+            if isinstance(technical_signals, list) and technical_signals:
+                merged_summary["technical_signals"] = technical_signals
+
+        return merged_summary
+
+    def _extract_labeled_section(self, text: str, label: str) -> str:
+        """Extract text from a labeled section like 【盘面小结】."""
+        if not isinstance(text, str) or not text.strip():
+            return ""
+
+        match = re.search(
+            rf"【{re.escape(label)}】[:：]?\s*(.*?)(?=(?:\n\s*\n【)|$)",
+            text,
+            re.S,
+        )
+        if not match:
+            return ""
+        return match.group(1).strip()
+
+    def _extract_summary_clauses(self, text: str) -> List[str]:
+        """Split summary text into normalized clauses for lightweight overlap checks."""
+        clauses = []
+        for raw_part in re.split(r"[，,。；;：:\n]+", text or ""):
+            clause = self._normalize_text(raw_part.strip())
+            if len(clause) >= 6:
+                clauses.append(clause)
+        return clauses
+
+    def _should_replace_market_summary(self, report_overview: str, market_summary: str) -> bool:
+        """Detect whether portfolio market_summary is repeating the overview narrative."""
+        overview_market = self._extract_labeled_section(report_overview, "盘面小结") or report_overview
+        normalized_overview = self._normalize_text(overview_market)
+        normalized_market = self._normalize_text(market_summary)
+
+        if not normalized_overview or not normalized_market:
+            return False
+        if normalized_overview in normalized_market or normalized_market in normalized_overview:
+            return True
+
+        similarity = SequenceMatcher(None, normalized_overview, normalized_market).ratio()
+        shared_clauses = set(self._extract_summary_clauses(overview_market)) & set(
+            self._extract_summary_clauses(market_summary)
+        )
+        shared_keywords = [
+            keyword
+            for keyword in self.MARKET_SUMMARY_KEYWORDS
+            if keyword in overview_market and keyword in market_summary
+        ]
+
+        return (
+            similarity >= 0.72
+            or len(shared_clauses) >= 2
+            or (len(shared_clauses) >= 1 and similarity >= 0.45)
+            or (similarity >= 0.50 and len(shared_keywords) >= 3)
+        )
+
+    def _apply_portfolio_summary_dedupe(
+        self,
+        portfolio_summary: Dict[str, Any],
+        report_overview: str,
+        portfolio_market_snapshot: Optional[Any],
+        portfolio_technical_snapshot: Optional[Any],
+    ) -> Dict[str, Any]:
+        """Replace repeated holdings summary with a holding-specific fallback."""
+        if not isinstance(portfolio_summary, dict):
+            return portfolio_summary
+
+        market_summary = portfolio_summary.get("market_summary")
+        if not isinstance(market_summary, str) or not market_summary.strip():
+            return portfolio_summary
+        if not self._should_replace_market_summary(report_overview, market_summary):
+            return portfolio_summary
+
+        replacement = ""
+        if isinstance(portfolio_technical_snapshot, dict):
+            candidate = portfolio_technical_snapshot.get("holding_view_summary")
+            if isinstance(candidate, str) and candidate.strip():
+                replacement = candidate.strip()
+
+        if not replacement and isinstance(portfolio_market_snapshot, dict):
+            candidate = portfolio_market_snapshot.get("market_summary")
+            if isinstance(candidate, str) and candidate.strip():
+                replacement = candidate.strip()
+
+        deduped_summary = dict(portfolio_summary)
+        if replacement:
+            deduped_summary["market_summary"] = replacement
+        return deduped_summary
+
+    def _normalize_text_list(self, raw_items: Any) -> List[str]:
+        """Keep only non-empty strings while preserving order."""
+        if not isinstance(raw_items, list):
+            return []
+
+        normalized_items = []
+        seen_items = set()
+        for item in raw_items:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if not text or text in seen_items:
+                continue
+            seen_items.add(text)
+            normalized_items.append(text)
+        return normalized_items
+
+    def _normalize_matrix_distribution(self, raw_matrix: Any) -> Dict[str, List[str]]:
+        """Validate matrix zones so formatter can safely render them."""
+        if not isinstance(raw_matrix, dict):
+            return {}
+
+        normalized_matrix = {}
+        for zone_key in ["黄金区", "需谨慎", "烟蒂区", "双杀区"]:
+            items = self._normalize_text_list(raw_matrix.get(zone_key, []))
+            if items:
+                normalized_matrix[zone_key] = items
+        return normalized_matrix
+
+    def _dedupe_portfolio_risk_warnings(
+        self,
+        portfolio_summary: Dict[str, Any],
+        report_overview: str,
+    ) -> Dict[str, Any]:
+        """Drop portfolio risk warnings that repeat the overview risk section when matrix data exists."""
+        if not isinstance(portfolio_summary, dict):
+            return portfolio_summary
+
+        matrix_distribution = portfolio_summary.get("matrix_distribution")
+        if not isinstance(matrix_distribution, dict) or not any(matrix_distribution.values()):
+            return portfolio_summary
+
+        warnings = portfolio_summary.get("risk_warnings")
+        if not isinstance(warnings, list) or not warnings:
+            return portfolio_summary
+
+        overview_risk = self._extract_labeled_section(report_overview, "风险提醒")
+        normalized_overview_risk = self._normalize_text(overview_risk)
+
+        deduped_warnings = []
+        seen_warnings = set()
+        for warning in warnings:
+            if not isinstance(warning, str) or not warning.strip():
+                continue
+
+            warning_text = warning.strip()
+            normalized_warning = self._normalize_text(warning_text)
+            if not normalized_warning or normalized_warning in seen_warnings:
+                continue
+
+            if normalized_overview_risk:
+                similarity = SequenceMatcher(None, normalized_overview_risk, normalized_warning).ratio()
+                if (
+                    normalized_warning in normalized_overview_risk
+                    or normalized_overview_risk in normalized_warning
+                    or similarity >= 0.72
+                ):
+                    continue
+
+            seen_warnings.add(normalized_warning)
+            deduped_warnings.append(warning_text)
+
+        deduped_summary = dict(portfolio_summary)
+        deduped_summary["risk_warnings"] = deduped_warnings
+        return deduped_summary
 
     def _normalize_portfolio_summary(
         self,
         portfolio_summary: Dict[str, Any],
         key_message_impacts: List[Dict[str, Any]],
         message_catalog: List[Dict[str, Any]],
+        portfolio_market_snapshot: Optional[Any] = None,
+        portfolio_technical_snapshot: Optional[Any] = None,
+        report_overview: str = "",
     ) -> Dict[str, Any]:
         """校验并修正持仓内外评级，避免模型把持仓内标的写入持仓外。"""
         if not isinstance(portfolio_summary, dict):
@@ -898,6 +1268,30 @@ class AIAnalyzer:
 
         normalized_summary["in_portfolio_actions"] = in_actions
         normalized_summary["out_of_portfolio_actions"] = out_actions
+        normalized_summary = self._merge_portfolio_market_snapshot(
+            normalized_summary,
+            portfolio_market_snapshot,
+        )
+        normalized_summary = self._merge_portfolio_technical_snapshot(
+            normalized_summary,
+            portfolio_technical_snapshot,
+        )
+        normalized_summary = self._apply_portfolio_summary_dedupe(
+            normalized_summary,
+            report_overview,
+            portfolio_market_snapshot,
+            portfolio_technical_snapshot,
+        )
+        normalized_summary["matrix_distribution"] = self._normalize_matrix_distribution(
+            normalized_summary.get("matrix_distribution")
+        )
+        normalized_summary["top_opportunities"] = self._normalize_text_list(
+            normalized_summary.get("top_opportunities")
+        )
+        normalized_summary["action_suggestions"] = self._normalize_text_list(
+            normalized_summary.get("action_suggestions")
+        )
+        normalized_summary.pop("risk_warnings", None)
         return normalized_summary
 
     def _enrich_message_impacts(
@@ -961,6 +1355,8 @@ class AIAnalyzer:
             messages.append({"role": "system", "content": self.system_prompt})
         messages.append({"role": "user", "content": user_prompt})
 
+        if self.mcp_runtime_config:
+            return self.client.chat(messages, mcp_config=self.mcp_runtime_config)
         return self.client.chat(messages)
 
     def _retry_fix_json(self, original_response: str, error_msg: str) -> Optional[AIAnalysisResult]:

@@ -11,6 +11,8 @@ from typing import Any, Dict, List
 
 from litellm import completion
 
+from trendradar.ai.mcp_bridge import run_mcp_completion
+
 
 class AIClient:
     """统一的 AI 客户端（基于 LiteLLM）"""
@@ -40,6 +42,76 @@ class AIClient:
         self.fallback_models = config.get("FALLBACK_MODELS", [])
         self.extra_params = config.get("EXTRA_PARAMS", {}) or {}
 
+    def _build_request_params(
+        self,
+        messages: List[Dict[str, str]],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": kwargs.get("temperature", self.temperature),
+            "timeout": kwargs.get("timeout", self.timeout),
+            "num_retries": kwargs.get("num_retries", self.num_retries),
+        }
+
+        if self.api_key:
+            params["api_key"] = self.api_key
+
+        if self.api_base:
+            params["api_base"] = self.api_base
+
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+        if max_tokens and max_tokens > 0:
+            params["max_tokens"] = max_tokens
+
+        if self.fallback_models:
+            params["fallbacks"] = self.fallback_models
+
+        reserved_keys = {
+            "model",
+            "messages",
+            "temperature",
+            "timeout",
+            "num_retries",
+            "api_key",
+            "api_base",
+            "max_tokens",
+            "fallbacks",
+            "mcp_config",
+        }
+
+        merged_extra_params = {
+            key: value
+            for key, value in self.extra_params.items()
+            if value is not None
+        }
+        for key, value in kwargs.items():
+            if key not in reserved_keys and value is not None:
+                merged_extra_params[key] = value
+
+        params.update(merged_extra_params)
+        return params
+
+    def _extract_content(self, response: Any) -> str:
+        content = response.choices[0].message.content
+        if isinstance(content, list):
+            content = "\n".join(
+                item.get("text", str(item)) if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        return content or ""
+
+    def _chat_with_mcp(
+        self,
+        messages: List[Dict[str, str]],
+        params: Dict[str, Any],
+        mcp_config: Dict[str, Any],
+    ) -> str:
+        completion_params = dict(params)
+        completion_params.pop("messages", None)
+        return run_mcp_completion(messages, completion_params, mcp_config)
+
     def chat(
         self,
         messages: List[Dict[str, str]],
@@ -58,68 +130,17 @@ class AIClient:
         Raises:
             Exception: API 调用失败时抛出异常
         """
-        # 构建请求参数
-        params = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": kwargs.get("temperature", self.temperature),
-            "timeout": kwargs.get("timeout", self.timeout),
-            "num_retries": kwargs.get("num_retries", self.num_retries),
-        }
+        mcp_config = kwargs.pop("mcp_config", None)
+        params = self._build_request_params(messages, **kwargs)
 
-        # 添加 API Key
-        if self.api_key:
-            params["api_key"] = self.api_key
+        if isinstance(mcp_config, dict) and mcp_config.get("ENABLED"):
+            try:
+                return self._chat_with_mcp(messages, params, mcp_config)
+            except Exception as exc:
+                print(f"[AI] MCP bridge unavailable, fallback to plain completion: {type(exc).__name__}: {exc}")
 
-        # 添加 API Base（如果配置了）
-        if self.api_base:
-            params["api_base"] = self.api_base
-
-        # 添加 max_tokens（如果配置了且不为 0）
-        max_tokens = kwargs.get("max_tokens", self.max_tokens)
-        if max_tokens and max_tokens > 0:
-            params["max_tokens"] = max_tokens
-
-        # 添加 fallback 模型（如果配置了）
-        if self.fallback_models:
-            params["fallbacks"] = self.fallback_models
-
-        # 合并配置中的额外参数，并允许调用时覆盖同名字段
-        reserved_keys = {
-            "model",
-            "messages",
-            "temperature",
-            "timeout",
-            "num_retries",
-            "api_key",
-            "api_base",
-            "max_tokens",
-            "fallbacks",
-        }
-
-        merged_extra_params = {
-            key: value
-            for key, value in self.extra_params.items()
-            if value is not None
-        }
-        for key, value in kwargs.items():
-            if key not in reserved_keys and value is not None:
-                merged_extra_params[key] = value
-
-        params.update(merged_extra_params)
-
-        # 调用 LiteLLM
         response = completion(**params)
-
-        # 提取响应内容
-        # 某些模型/提供商返回 list（内容块）而非 str，统一转为 str
-        content = response.choices[0].message.content
-        if isinstance(content, list):
-            content = "\n".join(
-                item.get("text", str(item)) if isinstance(item, dict) else str(item)
-                for item in content
-            )
-        return content or ""
+        return self._extract_content(response)
 
     def validate_config(self) -> tuple[bool, str]:
         """

@@ -518,6 +518,23 @@ ai_analysis:
     - key_message_impacts           # 重点消息与传导链
     - portfolio_summary             # 持仓评级与持仓外机会
 
+  enable_mcp: true                  # 是否允许 AI 在分析时调用 MCP 工具
+                                    # MiniMax 默认直接使用仓库内配置 + AI_API_KEY 环境变量
+
+  mcp_api_host: "https://api.minimaxi.com"
+                                    # MiniMax MCP 服务 API Host（会作为 MINIMAX_API_HOST 注入子进程）
+
+  mcp_config_file: ""
+                                    # 可选：自定义 MCP 配置文件路径（仅兼容其他 server 或手动覆盖时使用）
+
+  mcp_servers:
+    - "MiniMax"                    # 允许 AI 使用的 MCP server 名称，按顺序尝试
+
+  mcp_max_tool_rounds: 4            # 单次分析最多执行的工具轮数
+
+  enable_portfolio_technical_snapshot: true
+                                    # 是否为默认持仓注入日线技术面快照（道氏理论 + 缠论候选买卖点）
+
   include_rank_timeline: true       # 是否传递完整排名时间线
                                     # false: 使用简化格式（排名范围+时间范围+出现次数）
                                     # true: 传递完整排名变化轨迹（如 1(09:30)→2(10:00)→0(11:00)）

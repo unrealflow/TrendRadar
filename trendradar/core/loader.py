@@ -302,6 +302,15 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
             "staged_sections",
             ["report_overview", "key_message_impacts", "portfolio_summary"],
         ),
+        "ENABLE_MCP": ai_config.get("enable_mcp", False),
+        "MCP_API_HOST": ai_config.get("mcp_api_host", ""),
+        "MCP_CONFIG_FILE": ai_config.get("mcp_config_file", ""),
+        "MCP_SERVERS": ai_config.get("mcp_servers", ["MiniMax"]),
+        "MCP_MAX_TOOL_ROUNDS": ai_config.get("mcp_max_tool_rounds", 4),
+        "ENABLE_PORTFOLIO_TECHNICAL_SNAPSHOT": ai_config.get(
+            "enable_portfolio_technical_snapshot",
+            False,
+        ),
     }
 
 

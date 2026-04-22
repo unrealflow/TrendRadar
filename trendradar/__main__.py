@@ -26,7 +26,7 @@ from trendradar.core.analyzer import convert_keyword_stats_to_platform_stats
 from trendradar.crawler import DataFetcher
 from trendradar.storage import convert_crawl_results_to_news_data
 from trendradar.utils.time import DEFAULT_TIMEZONE, is_within_days, calculate_days_old
-from trendradar.ai import AIAnalyzer, AIAnalysisResult
+from trendradar.ai import AIAnalyzer, AIAnalysisResult, AIFilterResult
 from trendradar.core.scheduler import ResolvedSchedule
 
 
@@ -468,11 +468,16 @@ class NewsAnalyzer:
         current_results: Optional[Dict] = None,
         schedule: ResolvedSchedule = None,
         standalone_data: Optional[Dict] = None,
+        disable_staged_analysis: bool = False,
     ) -> Optional[AIAnalysisResult]:
         """执行 AI 分析"""
-        analysis_config = self.ctx.config.get("AI_ANALYSIS", {})
+        analysis_config = dict(self.ctx.config.get("AI_ANALYSIS", {}))
         if not analysis_config.get("ENABLED", False):
             return None
+
+        if disable_staged_analysis and analysis_config.get("STAGED_MODE", False):
+            analysis_config["STAGED_MODE"] = False
+            print("[Fast] 手动 fast 模式：禁用分板块分析，改为单次 AI 调用")
 
         # 调度系统决策
         if not schedule.analyze:
@@ -814,6 +819,8 @@ class NewsAnalyzer:
         standalone_data: Optional[Dict] = None,
         schedule: ResolvedSchedule = None,
         rss_new_urls: Optional[set] = None,
+        precomputed_ai_filter_result: Optional[AIFilterResult] = None,
+        disable_staged_analysis: bool = False,
     ) -> Tuple[List[Dict], Optional[str], Optional[AIAnalysisResult], Optional[List[Dict]]]:
         """统一的分析流水线：数据处理 → 统计计算（关键词/AI筛选）→ AI分析 → HTML生成"""
 
@@ -821,7 +828,11 @@ class NewsAnalyzer:
         if self.filter_method == "ai":
             # === AI 筛选策略 ===
             print("[筛选] 使用 AI 智能筛选策略")
-            ai_filter_result = self.ctx.run_ai_filter(interests_file=self.interests_file)
+            if precomputed_ai_filter_result is not None:
+                print("[筛选] 复用已存储 AI 筛选结果")
+                ai_filter_result = precomputed_ai_filter_result
+            else:
+                ai_filter_result = self.ctx.run_ai_filter(interests_file=self.interests_file)
 
             if ai_filter_result and ai_filter_result.success:
                 print(f"[筛选] AI 筛选完成: {ai_filter_result.total_matched} 条匹配, {len(ai_filter_result.tags)} 个标签")
@@ -870,7 +881,8 @@ class NewsAnalyzer:
             ai_result = self._run_ai_analysis(
                 stats, rss_items, mode, report_type, id_to_name,
                 current_results=data_source, schedule=schedule,
-                standalone_data=standalone_data
+                standalone_data=standalone_data,
+                disable_staged_analysis=disable_staged_analysis,
             )
 
         # 翻译 RSS 内容（如果启用）— 在 HTML 生成前执行，确保网页版也能展示翻译内容
@@ -923,6 +935,7 @@ class NewsAnalyzer:
         ai_result: Optional[AIAnalysisResult] = None,
         current_results: Optional[Dict] = None,
         schedule: ResolvedSchedule = None,
+        disable_staged_analysis: bool = False,
     ) -> bool:
         """统一的通知发送逻辑，包含所有判断条件，支持热榜+RSS合并推送+AI分析+独立展示区"""
         has_notification = self._has_notification_configured()
@@ -971,7 +984,9 @@ class NewsAnalyzer:
                 if ai_config.get("ENABLED", False):
                     ai_result = self._run_ai_analysis(
                         stats, rss_items, mode, report_type, id_to_name,
-                        current_results=current_results, schedule=schedule
+                        current_results=current_results,
+                        schedule=schedule,
+                        disable_staged_analysis=disable_staged_analysis,
                     )
 
             # 准备报告数据
@@ -1001,12 +1016,16 @@ class NewsAnalyzer:
                 print("未配置任何通知渠道，跳过通知发送")
                 return False
 
+            send_success = any(results.values())
+            if not send_success:
+                print("[推送] 所有通知渠道发送失败")
+                return False
+
             # 记录推送成功
-            if any(results.values()):
-                if schedule.once_push and schedule.period_key:
-                    scheduler = self.ctx.create_scheduler()
-                    date_str = self.ctx.format_date()
-                    scheduler.record_execution(schedule.period_key, "push", date_str)
+            if schedule.once_push and schedule.period_key:
+                scheduler = self.ctx.create_scheduler()
+                date_str = self.ctx.format_date()
+                scheduler.record_execution(schedule.period_key, "push", date_str)
 
             return True
 
@@ -1089,6 +1108,108 @@ class NewsAnalyzer:
             print(f"TXT 快照已保存: {txt_file}")
 
         return results, id_to_name, failed_ids
+
+    def _convert_news_data_to_results(self, news_data) -> Tuple[Dict, Dict, List]:
+        """Convert stored NewsData back into the crawler result structure."""
+        results: Dict[str, Dict[str, Dict]] = {}
+        id_to_name = dict(getattr(news_data, "id_to_name", {}) or {})
+        failed_ids = list(getattr(news_data, "failed_ids", []) or [])
+
+        for source_id, news_items in (getattr(news_data, "items", {}) or {}).items():
+            source_results = {}
+            for item in news_items:
+                ranks = list(getattr(item, "ranks", []) or [])
+                current_rank = getattr(item, "rank", 0)
+                if not ranks and current_rank:
+                    ranks = [current_rank]
+
+                source_results[item.title] = {
+                    "ranks": ranks,
+                    "rank": current_rank,
+                    "url": getattr(item, "url", "") or "",
+                    "mobileUrl": getattr(item, "mobile_url", "") or "",
+                    "count": getattr(item, "count", 1),
+                    "first_time": getattr(item, "first_time", "") or "",
+                    "last_time": getattr(item, "last_time", "") or "",
+                    "rank_timeline": getattr(item, "rank_timeline", []) or [],
+                }
+            results[source_id] = source_results
+
+        return results, id_to_name, failed_ids
+
+    def _build_manual_fast_schedule(self, base_schedule: ResolvedSchedule) -> ResolvedSchedule:
+        """Force analyze/push for a manual fast rerun without once gating."""
+        print("[Fast] 手动 fast 模式：强制启用 analyze/push，并跳过 once 限制")
+        return ResolvedSchedule(
+            period_key=None,
+            period_name="manual_fast",
+            day_plan="manual_fast",
+            collect=True,
+            analyze=True,
+            push=True,
+            report_mode=base_schedule.report_mode,
+            ai_mode=base_schedule.ai_mode,
+            once_analyze=False,
+            once_push=False,
+            frequency_file=base_schedule.frequency_file,
+            filter_method=base_schedule.filter_method,
+            interests_file=base_schedule.interests_file,
+        )
+
+    def _load_reusable_ai_filter_result(self) -> Optional[AIFilterResult]:
+        """Load the active AI filter snapshot so fast mode can skip reclassification."""
+        if self.filter_method != "ai":
+            return None
+
+        configured_interests = self.interests_file or getattr(self.ctx, "filter_config", {}).get("INTERESTS_FILE")
+        effective_interests_file = configured_interests or "ai_interests.txt"
+        date_str = self.ctx.format_date()
+        active_tags = self.storage_manager.get_active_ai_filter_tags(
+            date=date_str,
+            interests_file=effective_interests_file,
+        )
+        active_results = self.storage_manager.get_active_ai_filter_results(
+            date=date_str,
+            interests_file=effective_interests_file,
+        )
+        if not active_tags or not active_results:
+            raise RuntimeError(
+                "fast 模式未找到当天可复用的 AI 筛选结果，请先执行一次完整 run_hotnews.ps1"
+            )
+
+        cached_result = self.ctx._build_filter_result(
+            active_results,
+            active_tags,
+            total_processed=len(active_results),
+        )
+        print(
+            f"[Fast] 复用已存储 AI 筛选结果: {cached_result.total_matched} 条匹配, {len(cached_result.tags)} 个标签"
+        )
+        return cached_result
+
+    def _load_reusable_run_inputs(
+        self,
+    ) -> Tuple[Dict, Dict, List, Optional[List[Dict]], Optional[List[Dict]], Optional[List[Dict]], set]:
+        """Load the latest stored crawl and RSS data for fast reruns."""
+        date_str = self.ctx.format_date()
+        news_data = self.storage_manager.get_latest_crawl_data(date_str)
+        if not news_data or not getattr(news_data, "items", None):
+            raise RuntimeError("fast 模式未找到当天可复用的热榜抓取结果，请先执行一次完整 run_hotnews.ps1")
+
+        results, id_to_name, failed_ids = self._convert_news_data_to_results(news_data)
+        rss_items = None
+        rss_new_items = None
+        raw_rss_items = None
+        rss_new_urls = set()
+
+        if self.ctx.rss_enabled:
+            latest_rss_data = self.storage_manager.get_latest_rss_data(date_str)
+            if latest_rss_data and getattr(latest_rss_data, "items", None):
+                rss_items, rss_new_items, raw_rss_items, rss_new_urls = self._process_rss_data_by_mode(latest_rss_data)
+            else:
+                print("[Fast] 未找到当天可复用的 RSS 抓取结果，将仅复用热榜数据")
+
+        return results, id_to_name, failed_ids, rss_items, rss_new_items, raw_rss_items, rss_new_urls
 
     def _crawl_rss_data(self) -> Tuple[Optional[List[Dict]], Optional[List[Dict]], Optional[List[Dict]], set]:
         """
@@ -1493,7 +1614,9 @@ class NewsAnalyzer:
         rss_new_items: Optional[List[Dict]] = None,
         raw_rss_items: Optional[List[Dict]] = None,
         rss_new_urls: Optional[set] = None,
-    ) -> Optional[str]:
+        reuse_stored_data: bool = False,
+        schedule_override: Optional[ResolvedSchedule] = None,
+    ) -> Tuple[Optional[str], Optional[AIAnalysisResult], bool]:
         """执行模式特定逻辑，支持热榜+RSS合并推送
 
         简化后的逻辑：
@@ -1501,8 +1624,11 @@ class NewsAnalyzer:
         - 根据模式发送通知
         """
         # 调度系统
-        scheduler = self.ctx.create_scheduler()
-        schedule = scheduler.resolve()
+        if schedule_override is not None:
+            schedule = schedule_override
+        else:
+            scheduler = self.ctx.create_scheduler()
+            schedule = scheduler.resolve()
 
         # 使用 schedule 决定的 report_mode 覆盖全局配置
         effective_mode = schedule.report_mode
@@ -1522,10 +1648,16 @@ class NewsAnalyzer:
         # 使用 schedule 决定的 AI 筛选兴趣文件覆盖默认值
         self.interests_file = schedule.interests_file
 
-        # 如果调度器说不采集，则直接跳过
-        if not schedule.collect:
+        reused_ai_filter_result = None
+        if reuse_stored_data and self.filter_method == "ai":
+            reused_ai_filter_result = self._load_reusable_ai_filter_result()
+
+        # 如果调度器说不采集，则直接跳过；fast 模式复用存储数据时可绕过该门控。
+        if not schedule.collect and not reuse_stored_data:
             print("[调度] 当前时间段不执行数据采集，跳过分析流水线")
-            return None
+            return None, None, False
+        if not schedule.collect and reuse_stored_data:
+            print("[Fast] 复用存储数据模式：跳过 collect 门控，继续执行 AI/HTML/推送")
         # 获取当前监控平台ID列表
         current_platform_ids = self.ctx.platform_ids
 
@@ -1537,6 +1669,7 @@ class NewsAnalyzer:
         stats = []
         ai_result = None
         title_info = None
+        notification_sent = False
 
         # current 模式需要使用完整的历史数据
         if self.report_mode == "current":
@@ -1576,6 +1709,8 @@ class NewsAnalyzer:
                     standalone_data=standalone_data,
                     schedule=schedule,
                     rss_new_urls=rss_new_urls,
+                    precomputed_ai_filter_result=reused_ai_filter_result,
+                    disable_staged_analysis=reuse_stored_data,
                 )
 
                 combined_id_to_name = {**historical_id_to_name, **id_to_name}
@@ -1620,6 +1755,8 @@ class NewsAnalyzer:
                     standalone_data=standalone_data,
                     schedule=schedule,
                     rss_new_urls=rss_new_urls,
+                    precomputed_ai_filter_result=reused_ai_filter_result,
+                    disable_staged_analysis=reuse_stored_data,
                 )
 
                 combined_id_to_name = {**historical_id_to_name, **id_to_name}
@@ -1648,6 +1785,8 @@ class NewsAnalyzer:
                     standalone_data=standalone_data,
                     schedule=schedule,
                     rss_new_urls=rss_new_urls,
+                    precomputed_ai_filter_result=reused_ai_filter_result,
+                    disable_staged_analysis=reuse_stored_data,
                 )
         else:
             # incremental 模式：只使用当前抓取的数据
@@ -1670,6 +1809,8 @@ class NewsAnalyzer:
                 standalone_data=standalone_data,
                 schedule=schedule,
                 rss_new_urls=rss_new_urls,
+                precomputed_ai_filter_result=reused_ai_filter_result,
+                disable_staged_analysis=reuse_stored_data,
             )
 
         if html_file:
@@ -1681,7 +1822,7 @@ class NewsAnalyzer:
             standalone_data = self._prepare_standalone_data(
                 results, id_to_name, title_info, raw_rss_items
             )
-            self._send_notification_if_needed(
+            notification_sent = self._send_notification_if_needed(
                 stats,
                 mode_strategy["report_type"],
                 self.report_mode,
@@ -1695,6 +1836,7 @@ class NewsAnalyzer:
                 ai_result=ai_result,
                 current_results=results,
                 schedule=schedule,
+                disable_staged_analysis=reuse_stored_data,
             )
 
         # 打开浏览器（仅在显式启用且非容器环境）
@@ -1705,7 +1847,7 @@ class NewsAnalyzer:
         elif self.is_docker_container and html_file:
             print(f"HTML报告已生成（Docker环境）: {html_file}")
 
-        return html_file
+        return html_file, ai_result, notification_sent
 
     def run(self) -> None:
         """执行分析流程"""
@@ -1733,6 +1875,59 @@ class NewsAnalyzer:
                 raise
         finally:
             # 清理资源（包括过期数据清理和数据库连接关闭）
+            self.ctx.cleanup()
+
+    def run_with_reused_data(self) -> bool:
+        """Execute AI analysis and push by reusing stored crawl/filter results."""
+        try:
+            self._initialize_and_check_config()
+
+            mode_strategy = self._get_mode_strategy()
+            scheduler = self.ctx.create_scheduler()
+            fast_schedule = self._build_manual_fast_schedule(scheduler.resolve())
+            print("[Fast] 复用当天已存储的抓取与筛选结果，跳过实时抓取")
+
+            (
+                results,
+                id_to_name,
+                failed_ids,
+                rss_items,
+                rss_new_items,
+                raw_rss_items,
+                rss_new_urls,
+            ) = self._load_reusable_run_inputs()
+
+            _, ai_result, notification_sent = self._execute_mode_strategy(
+                mode_strategy,
+                results,
+                id_to_name,
+                failed_ids,
+                rss_items=rss_items,
+                rss_new_items=rss_new_items,
+                raw_rss_items=raw_rss_items,
+                rss_new_urls=rss_new_urls,
+                reuse_stored_data=True,
+                schedule_override=fast_schedule,
+            )
+
+            ai_enabled = self.ctx.config.get("AI_ANALYSIS", {}).get("ENABLED", False)
+            if ai_enabled:
+                if ai_result is None:
+                    raise RuntimeError("fast 模式未执行 AI 分析")
+                if not ai_result.success:
+                    raise RuntimeError(f"fast 模式 AI 分析失败: {ai_result.error or '未知错误'}")
+
+            if mode_strategy.get("should_send_notification") and not notification_sent:
+                raise RuntimeError("fast 模式未完成通知发送")
+
+            return True
+
+        except Exception as e:
+            print(f"分析流程执行出错: {e}")
+            if self.ctx.config.get("DEBUG", False):
+                raise
+            return False
+        finally:
             self.ctx.cleanup()
 
 
@@ -2174,6 +2369,11 @@ def main():
         action="store_true",
         help="发送测试通知到已配置渠道"
     )
+    parser.add_argument(
+        "--reuse-stored-data",
+        action="store_true",
+        help="复用当天已存储的抓取与筛选结果，只重跑 AI 分析与推送"
+    )
 
     args = parser.parse_args()
 
@@ -2222,7 +2422,11 @@ def main():
 
         # 获取 debug 配置
         debug_mode = analyzer.ctx.config.get("DEBUG", False)
-        analyzer.run()
+        if args.reuse_stored_data:
+            if not analyzer.run_with_reused_data():
+                raise SystemExit(1)
+        else:
+            analyzer.run()
     except FileNotFoundError as e:
         print(f"❌ 配置文件错误: {e}")
         print("\n请确保以下文件存在:")

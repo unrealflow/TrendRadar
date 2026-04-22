@@ -21,6 +21,11 @@ _FEISHU_MARKDOWN_REPLACEMENTS = {
     "**国家层**": "**🏛️ 国家层**",
     "**科技层**": "**🧪 科技层**",
     "**持仓汇总**": "**📦 持仓汇总**",
+    "【当日收益】": "【💹 当日收益】",
+    "【盘面小结】": "【🧭 盘面小结】",
+    "【持仓视角】": "【📌 持仓视角】",
+    "【持仓观察】": "【🔎 持仓观察】",
+    "【技术面】": "【📈 技术面】",
     "【持仓内】": "【🧺 持仓内】",
     "【持仓外】": "【🧭 持仓外】",
     "【风险提示】": "【⚠️ 风险提示】",
@@ -209,6 +214,86 @@ def _format_action_items(items: list, is_holding: bool) -> list[str]:
     return lines
 
 
+def _extract_portfolio_summary_text(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        summary = value.get("summary", "")
+        return summary.strip() if isinstance(summary, str) else ""
+    return ""
+
+
+def _extract_portfolio_notes(value) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        notes = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            note = item.strip()
+            if note:
+                notes.append(note)
+        return notes
+    return []
+
+
+def _append_portfolio_context(lines: list[str], portfolio: dict) -> None:
+    daily_summary = _extract_portfolio_summary_text(portfolio.get("daily_performance"))
+    if daily_summary:
+        lines.append("【当日收益】")
+        lines.append(daily_summary)
+        lines.append("")
+
+    market_summary = _extract_portfolio_summary_text(portfolio.get("market_summary"))
+    if market_summary:
+        lines.append("【持仓视角】")
+        lines.append(market_summary)
+        lines.append("")
+
+    holding_notes = _extract_portfolio_notes(portfolio.get("holding_notes"))
+    if holding_notes:
+        lines.append("【持仓观察】")
+        for index, note in enumerate(holding_notes, start=1):
+            lines.append(f"{index}. {note}")
+        lines.append("")
+
+    technical_summary = _extract_portfolio_summary_text(portfolio.get("technical_summary"))
+    technical_signals = _extract_portfolio_notes(portfolio.get("technical_signals"))
+    if technical_summary or technical_signals:
+        lines.append("【技术面】")
+        if technical_summary:
+            lines.append(technical_summary)
+        for index, signal in enumerate(technical_signals, start=1):
+            lines.append(f"{index}. {signal}")
+        lines.append("")
+
+
+def _append_portfolio_matrix_sections(lines: list[str], portfolio: dict) -> None:
+    matrix = portfolio.get("matrix_distribution", {})
+    if matrix:
+        lines.append("【矩阵分布】")
+        for zone_key in ["黄金区", "需谨慎", "烟蒂区", "双杀区"]:
+            items = matrix.get(zone_key, [])
+            if items:
+                lines.append(f"{zone_key}: {', '.join(items)}")
+        lines.append("")
+
+    opportunities = portfolio.get("top_opportunities", [])
+    if opportunities:
+        lines.append("【优先机会】")
+        for index, opp in enumerate(opportunities, start=1):
+            lines.append(f"{index}. {opp}")
+        lines.append("")
+
+    suggestions = portfolio.get("action_suggestions", [])
+    if suggestions:
+        lines.append("【操作建议】")
+        for index, sug in enumerate(suggestions, start=1):
+            lines.append(f"{index}. {sug}")
+        lines.append("")
+
+
 def _format_portfolio_summary(portfolio: dict) -> str:
     """
     格式化持仓汇总报告为纯文本
@@ -217,7 +302,6 @@ def _format_portfolio_summary(portfolio: dict) -> str:
         portfolio: 持仓汇总 dict，包含:
             - matrix_distribution: {"黄金区": [...], "需谨慎": [...], "烟蒂区": [...], "双杀区": [...]}
             - top_opportunities: ["候选1", ...]
-            - risk_warnings: ["风险提示1", ...]
             - action_suggestions: ["建议1", ...]
 
     Returns:
@@ -235,6 +319,8 @@ def _format_portfolio_summary(portfolio: dict) -> str:
     if in_portfolio_actions or out_of_portfolio_actions:
         lines = []
 
+        _append_portfolio_context(lines, portfolio)
+
         in_lines = _format_action_items(in_portfolio_actions, is_holding=True)
         if in_lines:
             lines.append("【持仓内】")
@@ -247,48 +333,15 @@ def _format_portfolio_summary(portfolio: dict) -> str:
             lines.extend(out_lines)
             lines.append("")
 
-        warnings = portfolio.get("risk_warnings", [])
-        if warnings:
-            lines.append("【风险提示】")
-            for index, warn in enumerate(warnings, start=1):
-                lines.append(f"{index}. {warn}")
+        _append_portfolio_matrix_sections(lines, portfolio)
 
         return "\n".join(lines).strip()
 
     lines = []
 
-    # 矩阵分布
-    matrix = portfolio.get("matrix_distribution", {})
-    if matrix:
-        lines.append("【矩阵分布】")
-        for zone_key in ["黄金区", "需谨慎", "烟蒂区", "双杀区"]:
-            items = matrix.get(zone_key, [])
-            if items:
-                lines.append(f"{zone_key}: {', '.join(items)}")
-        lines.append("")
+    _append_portfolio_context(lines, portfolio)
 
-    # 重点机会
-    opportunities = portfolio.get("top_opportunities", [])
-    if opportunities:
-        lines.append("【优先机会】")
-        for index, opp in enumerate(opportunities, start=1):
-            lines.append(f"{index}. {opp}")
-        lines.append("")
-
-    # 风险提示
-    warnings = portfolio.get("risk_warnings", [])
-    if warnings:
-        lines.append("【风险提示】")
-        for index, warn in enumerate(warnings, start=1):
-            lines.append(f"{index}. {warn}")
-        lines.append("")
-
-    # 操作建议
-    suggestions = portfolio.get("action_suggestions", [])
-    if suggestions:
-        lines.append("【操作建议】")
-        for index, sug in enumerate(suggestions, start=1):
-            lines.append(f"{index}. {sug}")
+    _append_portfolio_matrix_sections(lines, portfolio)
 
     return "\n".join(lines).strip()
 
