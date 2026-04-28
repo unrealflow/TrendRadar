@@ -13,6 +13,27 @@ from typing import Tuple
 _CONFIG_ROOT = Path(__file__).parent.parent.parent / "config"
 
 
+def _extract_section(
+    content: str,
+    section_name: str,
+    next_sections: Tuple[str, ...],
+) -> str:
+    """Extract a named prompt section while keeping backward compatibility."""
+    marker = f"[{section_name}]"
+    start = content.find(marker)
+    if start == -1:
+        return ""
+
+    section_start = start + len(marker)
+    section_end = len(content)
+    for next_section in next_sections:
+        next_index = content.find(f"[{next_section}]", section_start)
+        if next_index != -1:
+            section_end = min(section_end, next_index)
+
+    return content[section_start:section_end].strip()
+
+
 def load_prompt_template(
     prompt_file: str,
     config_subdir: str = "",
@@ -41,15 +62,17 @@ def load_prompt_template(
     system_prompt = ""
     user_prompt = ""
 
-    if "[system]" in content and "[user]" in content:
-        parts = content.split("[user]")
-        system_part = parts[0]
-        user_part = parts[1] if len(parts) > 1 else ""
+    if any(section in content for section in ("[persona]", "[system]", "[user]")):
+        persona_prompt = _extract_section(content, "persona", ("system", "user"))
+        system_body = _extract_section(content, "system", ("user",))
+        user_prompt = _extract_section(content, "user", ("persona", "system", "user"))
 
-        if "[system]" in system_part:
-            system_prompt = system_part.split("[system]")[1].strip()
-
-        user_prompt = user_part.strip()
+        system_parts = []
+        if persona_prompt:
+            system_parts.append(persona_prompt)
+        if system_body:
+            system_parts.append(system_body)
+        system_prompt = "\n\n".join(system_parts)
     else:
         user_prompt = content
 

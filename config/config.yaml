@@ -432,12 +432,12 @@ ai:
                                     #    (原理：前缀 openai/ 强制 LiteLLM 使用 OpenAI 协议格式进行通信)
 
 
-  timeout: 120                      # 请求超时（秒）
+  timeout: 240                      # 请求超时（秒）
 
   temperature: 0.2                  # 采样温度 (0.0-2.0)
                                     # MiniMax-M2.7 做结构化 JSON 分析时建议低温度，降低跑题和字段漂移
   
-  max_tokens: 5000                  # 最大生成 token 数
+  max_tokens: 10000                 # 最大生成 token 数
                                     # 注意：如果 API 不支持此参数(报 HTTP 400)，请设为 0 以禁用发送
   # 高级选项
   num_retries: 5                    # 失败重试次数
@@ -456,6 +456,12 @@ ai:
   # -------------------------------------------------------------
   extra_params:
     top_p: 0.85                     # 配合低温度收敛输出，适合 MiniMax-M2.7 的结构化任务
+    reasoning_effort:
+      effort: "low"
+      summary: "detailed"
+                                    # MiniMax 专用参数，控制模型在分析时的推理深度与总结程度
+                                    # effort: "low" | "medium" | "high"
+                                    # summary: "brief" | "detailed"
 
 
 # ===============================================================
@@ -477,6 +483,38 @@ ai_analysis:
 
   # 提示词配置文件路径（相对于 config 目录）
   prompt_file: "ai_analysis_prompt.txt"
+
+  # 高峰期模型路由（仅对指定 prompt 生效）
+  # 默认按北京时间 11:00 - 21:00 判断；只有命中的 prompt 才切到下面的专用 API。
+  # 当前默认策略：
+  #   - 普通时段 / 其他 prompt → 继续使用上方共享 ai 配置（MiniMax）
+  #   - 高峰时段 + ai_analysis_prompt.txt → 切到 GitHub Copilot
+  # 默认关闭；本地可在 .env.local 中设置 AI_ANALYSIS_PEAK_ROUTING_ENABLED=true 开启。
+  peak_routing:
+    enabled: false
+    timezone: "Asia/Shanghai"      # 默认按北京时间判断
+    start: "11:00"
+    end: "21:00"
+
+    prompt_files:
+      - "ai_analysis_prompt.txt"   # 仅默认主分析 prompt 命中高峰期路由
+
+    ai:
+      model: "github_copilot/gpt-5.4"
+                                    # GitHub Copilot provider；首次运行通常需要完成设备流登录
+      api_key: ""                   # Copilot 设备流不依赖传统 API Key，保留空字符串即可
+      api_base: ""                  # 使用 provider 默认端点
+      timeout: 240
+      temperature: 0.2
+      max_tokens: 5000
+      num_retries: 5
+      fallback_models: []
+      extra_params:
+        reasoning_effort:
+          effort: "low"
+          summary: "detailed"
+                                    # 若 LiteLLM/provider 返回 reasoning_content，将在日志中显示；
+                                    # 若当前 provider 不透传，则日志会明确提示不可用。
 
   # AI 分析模式（独立于推送报告模式）
   # 可选值:
@@ -509,7 +547,7 @@ ai_analysis:
   include_standalone: true          # 是否将独立展示区数据纳入 AI 分析
                                     # 数据源列表来自 display.standalone.platforms / display.standalone.rss_feeds
 
-  staged_mode: true                 # 是否按板块拆分为多次模型调用
+  staged_mode: false                # 是否按板块拆分为多次模型调用
                                     # true: 按板块分别调用模型并聚合，成本更高但通常更稳
                                     # false: 单次调用输出完整研报
 
@@ -517,9 +555,14 @@ ai_analysis:
     - report_overview               # 核心判断
     - key_message_impacts           # 重点消息与传导链
     - portfolio_summary             # 持仓评级与持仓外机会
+    - life_strategy_overview        # 社会观察与个人选择
+    - political_economy_analysis    # 政治经济分析
 
-  enable_mcp: true                  # 是否允许 AI 在分析时调用 MCP 工具
-                                    # MiniMax 默认直接使用仓库内配置 + AI_API_KEY 环境变量
+  # BEGIN BY wangsikan@kuaishou.com: Phase 3 - MCP default-off
+  enable_mcp: true                 # 是否允许 AI 在分析时调用 MCP 工具
+                                    # 默认关闭：MCP 冷启动 + 工具轮调用会明显拖慢分析
+                                    # 开启后 MiniMax 默认直接使用仓库内配置 + AI_API_KEY 环境变量
+  # END BY wangsikan@kuaishou.com
 
   mcp_api_host: "https://api.minimaxi.com"
                                     # MiniMax MCP 服务 API Host（会作为 MINIMAX_API_HOST 注入子进程）
@@ -531,6 +574,9 @@ ai_analysis:
     - "MiniMax"                    # 允许 AI 使用的 MCP server 名称，按顺序尝试
 
   mcp_max_tool_rounds: 4            # 单次分析最多执行的工具轮数
+
+  mcp_idle_timeout_seconds: 300     # MCP 看门狗：超过该秒数无心跳更新则主动中断
+                                    #   用于防止 uvx / 工具链异常卡住整轮分析
 
   enable_portfolio_technical_snapshot: true
                                     # 是否为默认持仓注入日线技术面快照（道氏理论 + 缠论候选买卖点）

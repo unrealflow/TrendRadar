@@ -1,0 +1,127 @@
+# ═══════════════════════════════════════════════════════════════
+#                    TrendRadar 默认持仓配置
+#                      Version: 1.0.0
+# ═══════════════════════════════════════════════════════════════
+#
+# 说明：
+#   - 此文件是 AI 分析使用的默认持仓库。
+#   - `code` 为逻辑代码（供程序解析与代理行情/技术快照映射）。
+#   - `fund_code` 为实际可交易基金代码（仅用于展示/回测）。
+#   - `weight_pct` 为目标仓位百分比（数字，不带 %）。
+#   - `description` 为一句话说明，会被渲染进 AI prompt。
+#
+# 如果本文件缺失或解析失败，analyzer 会回退去解析 ai_analysis_prompt.txt
+# 中的内嵌持仓表（旧兼容路径）。
+#
+# ═══════════════════════════════════════════════════════════════
+
+meta:
+  data_cutoff: "2026-03-18"
+  note: "首列逻辑代码用于程序解析；fund_code 列用于实际交易代码"
+
+holdings:
+  - code: CITU-BOND
+    name: 城投债
+    weight_pct: 22
+    fund_code: "511220.SS"
+    description: "中国城投债指数，信用债防守底仓，受化债政策和货币宽松驱动"
+  - code: POLICY-BOND
+    name: 政经债
+    weight_pct: 20
+    fund_code: "511090.SS / 511160.SS"
+    description: "政金债指数，纯利率敏感型底仓，与10Y国债收益率高度联动"
+  - code: CSI-DIVIDEND
+    name: 中证红利
+    weight_pct: 5
+    fund_code: "515080.SS"
+    description: "中证红利指数，A股高股息煤炭/银行/交运，受无风险利率和能源价格驱动"
+  - code: HSI-HDIV-LOWVOL
+    name: 恒生红利低波
+    weight_pct: 5
+    fund_code: "159545.SZ"
+    description: "恒生红利低波指数，港股高股息+低波动金融公用事业，受HIBOR和南向资金驱动"
+  - code: NF-EW-SELECT
+    name: 南方东西精选
+    weight_pct: 5
+    fund_code: "03441.HK"
+    description: "35%美股Russell1000+65%港股南向高股息，美联储降息+南向资金双受益"
+  - code: GX-VALUE
+    name: 国信价值
+    weight_pct: 5
+    fund_code: "512040.SS"
+    description: "中证国信价值指数，A股低估值金融/周期/消费价值股，受稳增长政策驱动"
+  - code: SPX
+    name: 标普500
+    weight_pct: 4
+    fund_code: "513650.SS"
+    description: "S&P 500指数，美股大盘科技，受美联储利率路径和AI资本开支驱动"
+  - code: N225
+    name: 日经225
+    weight_pct: 4
+    fund_code: "513000.SS"
+    description: "日经225指数，日本出口蓝筹，受USD/JPY汇率和日本央行政策驱动"
+  - code: DAX
+    name: 德国DAX
+    weight_pct: 4
+    fund_code: "159561.SZ"
+    description: "DAX指数，德国40只蓝筹，受北约防务预算和能源转型驱动"
+  - code: APAC-SELECT
+    name: 亚太精选
+    weight_pct: 4
+    fund_code: "159687.SZ"
+    description: "富时亚太低碳指数，澳韩新港台，受美元走势和中国经济驱动"
+  - code: HK-CONNECT-50
+    name: 港股通50
+    weight_pct: 4
+    fund_code: "513550.SS"
+    description: "港股通50指数，港股大盘腾讯阿里美团金融，受南向资金和监管政策驱动"
+  - code: HSTECH
+    name: 港股科技
+    weight_pct: 3
+    fund_code: "513010.SS"
+    description: "恒生科技指数，港股科技互联网高弹性，受美联储利率和中美科技关系驱动"
+  - code: STAR-CHIP-DESIGN
+    name: 科创芯片设计
+    weight_pct: 1
+    fund_code: "588780.SS"
+    description: "上证科创板芯片设计指数，A股半导体小仓位，受国产替代和出口管制驱动"
+  - code: STAR-VALUE
+    name: 科创价值
+    weight_pct: 1
+    fund_code: "588910.SS"
+    description: "上证智选科创板创新价值指数，科创板低估值成长，受科创板政策驱动"
+  - code: GOLD
+    name: 黄金
+    weight_pct: 7
+    fund_code: "518850.SS"
+    description: "现货黄金，避险对冲资产，受实际利率、美元指数和地缘风险驱动"
+  - code: SOYMEAL
+    name: 豆粕
+    weight_pct: 1
+    fund_code: "159985.SZ"
+    description: "大连豆粕期货，农产品分散敞口，受CBOT大豆和南美产量驱动"
+  - code: BASE-METALS
+    name: 有色
+    weight_pct: 1
+    fund_code: "159980.SZ"
+    description: "有色金属指数（铜博士），受中国需求和美元走势驱动"
+  - code: OIL-GAS
+    name: 油气
+    weight_pct: 1
+    fund_code: "162411.SZ"
+    description: "原油/油气指数，受地缘政治溢价的供给冲击驱动"
+  - code: SE-ASIA-TECH
+    name: 东南亚科技
+    weight_pct: 1
+    fund_code: "513730.SS"
+    description: "东南亚科技相关指数，受全球制造业转移、数字经济高增长和人口红利驱动"
+  - code: HK-INNOV-DRUG
+    name: 港股创新药
+    weight_pct: 1
+    fund_code: "513120.SS"
+    description: "港股创新药相关指数，受BD授权放量、研发管线兑现和政策支持驱动"
+  - code: GRID-EQUIP
+    name: 电网设备
+    weight_pct: 1
+    fund_code: "159326.SZ"
+    description: "电网设备相关指数，受特高压建设、电网投资提速和新能源并网驱动"

@@ -29,6 +29,13 @@ _FEISHU_MARKDOWN_REPLACEMENTS = {
     "【持仓内】": "【🧺 持仓内】",
     "【持仓外】": "【🧭 持仓外】",
     "【风险提示】": "【⚠️ 风险提示】",
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.E - persona section decorations
+    "【网格操作】": "【🧮 网格操作】",
+    "【宏观日历】": "【📅 宏观日历】",
+    "【分红/通道】": "【🏦 分红/通道】",
+    "【人力资本】": "【🧑‍💼 人力资本】",
+    "【现金流桶】": "【💰 现金流桶】",
+    # END BY wangsikan@kuaishou.com
 }
 
 
@@ -268,6 +275,156 @@ def _append_portfolio_context(lines: list[str], portfolio: dict) -> None:
             lines.append(f"{index}. {signal}")
         lines.append("")
 
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.E - render 5 new persona-aware fields
+    _append_portfolio_persona_sections(lines, portfolio)
+    # END BY wangsikan@kuaishou.com
+
+
+# BEGIN BY wangsikan@kuaishou.com: Phase 3.E - persona-aware render helpers
+def _append_portfolio_persona_sections(lines: list[str], portfolio: dict) -> None:
+    """Render 5 persona-aware sections produced by prompt v3.3.0.
+
+    Sections:
+        - grid_actions:        ETF 网格信号与操作提示（list[str | dict]）
+        - macro_calendar:      关键宏观事件日历
+        - tax_channel_notes:   分红/再投/扣税/通道差异提示
+        - human_capital_notes: 工作/行业/配偶/家庭收入角度
+        - cash_flow_buckets:   3 年刚性现金流桶（购房/生育等）
+    """
+    grid_actions = portfolio.get("grid_actions")
+    if isinstance(grid_actions, list) and grid_actions:
+        lines.append("【网格操作】")
+        for index, action in enumerate(grid_actions, start=1):
+            text = _persona_item_to_text(action)
+            if text:
+                lines.append(f"{index}. {text}")
+        lines.append("")
+
+    macro_calendar = portfolio.get("macro_calendar")
+    if isinstance(macro_calendar, list) and macro_calendar:
+        lines.append("【宏观日历】")
+        for index, event in enumerate(macro_calendar, start=1):
+            text = _persona_calendar_to_text(event)
+            if text:
+                lines.append(f"{index}. {text}")
+        lines.append("")
+
+    tax_notes = portfolio.get("tax_channel_notes")
+    tax_lines = _persona_collect_notes(tax_notes)
+    if tax_lines:
+        lines.append("【分红/通道】")
+        for index, note in enumerate(tax_lines, start=1):
+            lines.append(f"{index}. {note}")
+        lines.append("")
+
+    human_notes = portfolio.get("human_capital_notes")
+    human_lines = _persona_collect_notes(human_notes)
+    if human_lines:
+        lines.append("【人力资本】")
+        for index, note in enumerate(human_lines, start=1):
+            lines.append(f"{index}. {note}")
+        lines.append("")
+
+    cash_buckets = portfolio.get("cash_flow_buckets")
+    if isinstance(cash_buckets, list) and cash_buckets:
+        lines.append("【现金流桶】")
+        for index, bucket in enumerate(cash_buckets, start=1):
+            text = _persona_bucket_to_text(bucket)
+            if text:
+                lines.append(f"{index}. {text}")
+        lines.append("")
+    elif isinstance(cash_buckets, dict) and cash_buckets:
+        lines.append("【现金流桶】")
+        idx = 1
+        for label, value in cash_buckets.items():
+            if not value:
+                continue
+            lines.append(f"{idx}. {label}：{value}")
+            idx += 1
+        lines.append("")
+
+
+def _persona_item_to_text(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        return ""
+    parts: list[str] = []
+    code = value.get("code") or value.get("symbol")
+    name = value.get("name") or value.get("target")
+    if code and name:
+        parts.append(f"{name}({code})")
+    elif name or code:
+        parts.append(str(name or code))
+    phase = value.get("phase") or value.get("trigger") or value.get("signal")
+    if phase:
+        parts.append(str(phase))
+    action = value.get("action") or value.get("operation")
+    if action:
+        parts.append(str(action))
+    note = value.get("note") or value.get("reason") or value.get("desc")
+    if note:
+        parts.append(str(note))
+    return "；".join(p for p in parts if p)
+
+
+def _persona_calendar_to_text(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        return ""
+    date = value.get("date") or value.get("when") or ""
+    event = value.get("event") or value.get("title") or value.get("name") or ""
+    impact = value.get("impact") or value.get("note") or ""
+    parts = []
+    if date:
+        parts.append(str(date))
+    if event:
+        parts.append(str(event))
+    if impact:
+        parts.append(str(impact))
+    return " | ".join(parts)
+
+
+def _persona_collect_notes(value) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append(text)
+        elif isinstance(item, dict):
+            text = _persona_item_to_text(item)
+            if text:
+                out.append(text)
+    return out
+
+
+def _persona_bucket_to_text(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        return ""
+    label = value.get("label") or value.get("name") or value.get("purpose") or ""
+    amount = value.get("amount") or value.get("target_amount") or value.get("size")
+    horizon = value.get("horizon") or value.get("years") or value.get("time")
+    note = value.get("note") or value.get("desc") or ""
+    parts = []
+    if label:
+        parts.append(str(label))
+    if amount:
+        parts.append(f"规模 {amount}")
+    if horizon:
+        parts.append(f"期限 {horizon}")
+    if note:
+        parts.append(str(note))
+    return "；".join(parts)
+# END BY wangsikan@kuaishou.com
+
 
 def _append_portfolio_matrix_sections(lines: list[str], portfolio: dict) -> None:
     matrix = portfolio.get("matrix_distribution", {})
@@ -361,6 +518,12 @@ def _get_research_sections(result: AIAnalysisResult) -> list[tuple[str, str]]:
     if portfolio_text:
         sections.append(("评级建议", portfolio_text))
 
+    if result.life_strategy_overview:
+        sections.append(("生活策略", _format_list_content(result.life_strategy_overview)))
+
+    if result.political_economy_analysis:
+        sections.append(("政治经济分析", _format_list_content(result.political_economy_analysis)))
+
     return [(title, content) for title, content in sections if content]
 
 
@@ -378,8 +541,75 @@ def _has_research_sections(result: AIAnalysisResult) -> bool:
     return bool(_get_research_sections(result))
 
 
+# BEGIN BY wangsikan@kuaishou.com: Phase 3.B - completeness banner (data-missing alert)
+def _collect_completeness_warnings(result: AIAnalysisResult) -> list[str]:
+    """Detect missing / low-quality sections and return banner warnings."""
+    warnings: list[str] = []
+    expected_sections = (
+        "report_overview",
+        "key_message_impacts",
+        "portfolio_summary",
+        "life_strategy_overview",
+        "political_economy_analysis",
+    )
+    section_labels = {
+        "report_overview": "核心判断",
+        "key_message_impacts": "重点消息",
+        "portfolio_summary": "持仓汇总",
+        "life_strategy_overview": "生活策略",
+        "political_economy_analysis": "政治经济分析",
+    }
+    missing: list[str] = []
+    for section in expected_sections:
+        value = getattr(result, section, None)
+        if section == "key_message_impacts":
+            if not value:
+                missing.append(section_labels[section])
+        elif section == "portfolio_summary":
+            if not isinstance(value, dict) or not any(value.values()):
+                missing.append(section_labels[section])
+        else:
+            if not value or not str(value).strip():
+                missing.append(section_labels[section])
+    if missing:
+        warnings.append("缺失板块：" + "、".join(missing))
+    portfolio = result.portfolio_summary if isinstance(result.portfolio_summary, dict) else {}
+    daily = portfolio.get("daily_performance")
+    if not isinstance(daily, dict) or not daily:
+        warnings.append("行情快照缺失：无当日收益数据")
+    stage_stats = getattr(result, "stage_stats", None) or []
+    failed = [s.get("section") for s in stage_stats if isinstance(s, dict) and not s.get("success")]
+    if failed:
+        warnings.append("板块失败：" + "、".join(str(x) for x in failed if x))
+    return warnings
+
+
+def _render_banner_markdown(warnings: list[str]) -> list[str]:
+    if not warnings:
+        return []
+    lines = ["**⚠️ 数据不完整提示**"]
+    for warning in warnings:
+        lines.append(f"- {warning}")
+    lines.append("")
+    return lines
+
+
+def _render_banner_plain(warnings: list[str]) -> list[str]:
+    if not warnings:
+        return []
+    lines = ["[⚠️ 数据不完整提示]"]
+    for warning in warnings:
+        lines.append(f"- {warning}")
+    lines.append("")
+    return lines
+# END BY wangsikan@kuaishou.com
+
+
 def _render_research_markdown(result: AIAnalysisResult) -> str:
     lines = ["**✨ AI 热点研判**", ""]
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - prepend completeness banner
+    lines = _render_banner_markdown(_collect_completeness_warnings(result)) + lines
+    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"**{title}**", content, ""])
     return "\n".join(lines)
@@ -387,6 +617,11 @@ def _render_research_markdown(result: AIAnalysisResult) -> str:
 
 def _render_research_dingtalk(result: AIAnalysisResult) -> str:
     lines = ["### ✨ AI 热点研判", ""]
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for dingtalk
+    warnings = _collect_completeness_warnings(result)
+    if warnings:
+        lines = ["> ⚠️ **数据不完整**：" + "；".join(warnings), ""] + lines
+    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"#### {title}", content, ""])
     return "\n".join(lines)
@@ -394,6 +629,9 @@ def _render_research_dingtalk(result: AIAnalysisResult) -> str:
 
 def _render_research_plain(result: AIAnalysisResult) -> str:
     lines = ["【✨ AI 热点研判】", ""]
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for plain
+    lines = _render_banner_plain(_collect_completeness_warnings(result)) + lines
+    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"[{title}]", content, ""])
     return "\n".join(lines)
@@ -401,6 +639,12 @@ def _render_research_plain(result: AIAnalysisResult) -> str:
 
 def _render_research_telegram(result: AIAnalysisResult) -> str:
     lines = ["<b>✨ AI 热点研判</b>", ""]
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for telegram
+    warnings = _collect_completeness_warnings(result)
+    if warnings:
+        banner = "⚠️ <b>数据不完整</b>：" + _escape_html("；".join(warnings))
+        lines = [banner, ""] + lines
+    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"<b>{_escape_html(title)}</b>", _escape_html(content), ""])
     return "\n".join(lines)
@@ -408,6 +652,15 @@ def _render_research_telegram(result: AIAnalysisResult) -> str:
 
 def _render_research_html(result: AIAnalysisResult) -> str:
     html_parts = ['<div class="ai-analysis">', "<h3>✨ AI 热点研判</h3>"]
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for html
+    warnings = _collect_completeness_warnings(result)
+    if warnings:
+        warn_html = "；".join(_escape_html(w) for w in warnings)
+        html_parts.insert(
+            1,
+            f'<div class="ai-warning" style="color:#c00;font-weight:bold;">⚠️ 数据不完整：{warn_html}</div>',
+        )
+    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         content_html = _escape_html(content).replace("\n", "<br>")
         html_parts.extend(
@@ -423,12 +676,24 @@ def _render_research_html(result: AIAnalysisResult) -> str:
 
 
 def _render_research_html_rich(result: AIAnalysisResult) -> str:
+    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for html rich
+    warnings = _collect_completeness_warnings(result)
+    warning_html = ""
+    if warnings:
+        warn_html = "；".join(_escape_html(w) for w in warnings)
+        warning_html = (
+            f'\n                    <div class="ai-warning" '
+            f'style="background:#fff1f0;color:#a8071a;border-left:4px solid #ff4d4f;'
+            f'padding:8px 12px;margin:4px 0 12px;border-radius:4px;">'
+            f'⚠️ 数据不完整：{warn_html}</div>'
+        )
+    # END BY wangsikan@kuaishou.com
     ai_html = """
                 <div class="ai-section">
                     <div class="ai-section-header">
                         <div class="ai-section-title">✨ AI 热点研判</div>
                         <span class="ai-section-badge">AI</span>
-                    </div>
+                    </div>""" + warning_html + """
                     <div class="ai-blocks-grid">"""
 
     for title, content in _get_research_sections(result):

@@ -285,8 +285,36 @@ def _load_ai_config(config_data: Dict) -> Dict:
 def _load_ai_analysis_config(config_data: Dict) -> Dict:
     """加载 AI 分析配置（功能配置，模型配置见 _load_ai_config）"""
     ai_config = config_data.get("ai_analysis", {})
+    peak_routing = ai_config.get("peak_routing", {})
+    if not isinstance(peak_routing, dict):
+        peak_routing = {}
+    peak_prompt_files = peak_routing.get("prompt_files", ["ai_analysis_prompt.txt"])
+    if isinstance(peak_prompt_files, str):
+        peak_prompt_files = [peak_prompt_files]
+    if not isinstance(peak_prompt_files, list) or not peak_prompt_files:
+        peak_prompt_files = ["ai_analysis_prompt.txt"]
+
+    peak_ai = peak_routing.get("ai", {})
+    if not isinstance(peak_ai, dict):
+        peak_ai = {}
+
+    peak_ai_config = {}
+    for output_key, source_key in (
+        ("MODEL", "model"),
+        ("API_KEY", "api_key"),
+        ("API_BASE", "api_base"),
+        ("TIMEOUT", "timeout"),
+        ("TEMPERATURE", "temperature"),
+        ("MAX_TOKENS", "max_tokens"),
+        ("NUM_RETRIES", "num_retries"),
+        ("FALLBACK_MODELS", "fallback_models"),
+        ("EXTRA_PARAMS", "extra_params"),
+    ):
+        if source_key in peak_ai:
+            peak_ai_config[output_key] = peak_ai.get(source_key)
 
     enabled_env = _get_env_bool("AI_ANALYSIS_ENABLED")
+    peak_enabled_env = _get_env_bool("AI_ANALYSIS_PEAK_ROUTING_ENABLED")
 
     return {
         "ENABLED": enabled_env if enabled_env is not None else ai_config.get("enabled", False),
@@ -300,17 +328,34 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
         "STAGED_MODE": ai_config.get("staged_mode", False),
         "STAGED_SECTIONS": ai_config.get(
             "staged_sections",
-            ["report_overview", "key_message_impacts", "portfolio_summary"],
+            [
+                "report_overview",
+                "key_message_impacts",
+                "portfolio_summary",
+                "life_strategy_overview",
+                "political_economy_analysis",
+            ],
         ),
         "ENABLE_MCP": ai_config.get("enable_mcp", False),
         "MCP_API_HOST": ai_config.get("mcp_api_host", ""),
         "MCP_CONFIG_FILE": ai_config.get("mcp_config_file", ""),
         "MCP_SERVERS": ai_config.get("mcp_servers", ["MiniMax"]),
         "MCP_MAX_TOOL_ROUNDS": ai_config.get("mcp_max_tool_rounds", 4),
+        # BEGIN BY wangsikan@kuaishou.com: Phase 3 - MCP idle watchdog timeout
+        "MCP_IDLE_TIMEOUT_SECONDS": ai_config.get("mcp_idle_timeout_seconds", 300),
+        # END BY wangsikan@kuaishou.com
         "ENABLE_PORTFOLIO_TECHNICAL_SNAPSHOT": ai_config.get(
             "enable_portfolio_technical_snapshot",
             False,
         ),
+        "PEAK_ROUTING": {
+            "ENABLED": peak_enabled_env if peak_enabled_env is not None else peak_routing.get("enabled", False),
+            "TIMEZONE": peak_routing.get("timezone", "Asia/Shanghai"),
+            "START": peak_routing.get("start", "11:00"),
+            "END": peak_routing.get("end", "21:00"),
+            "PROMPT_FILES": peak_prompt_files,
+            "AI": peak_ai_config,
+        },
     }
 
 
