@@ -17,7 +17,6 @@ from openai import OpenAI
 from trendradar.ai.mcp_bridge import run_mcp_completion
 
 
-# BEGIN BY wangsikan@kuaishou.com: heartbeat logging for long AI calls
 def _start_heartbeat(
     label: str,
     interval: float = 15.0,
@@ -48,7 +47,6 @@ def _start_heartbeat(
     thread = threading.Thread(target=_tick, name=f"ai-heartbeat-{label}", daemon=True)
     thread.start()
     return stop_event
-# END BY wangsikan@kuaishou.com
 
 
 class AIClient:
@@ -413,7 +411,6 @@ class AIClient:
         return params
 
     def _extract_content(self, response: Any) -> str:
-        # BEGIN BY wangsikan@kuaishou.com: defensive handling for empty/invalid response
         choices = getattr(response, "choices", None)
         if not choices:
             # LiteLLM may return a response without choices when auth fails (e.g. github_copilot
@@ -431,7 +428,6 @@ class AIClient:
         first = choices[0]
         message = getattr(first, "message", None)
         content = getattr(message, "content", None) if message is not None else None
-        # END BY wangsikan@kuaishou.com
         return self._normalize_response_text(content)
 
     def _chat_with_mcp(
@@ -442,11 +438,9 @@ class AIClient:
     ) -> str:
         completion_params = dict(params)
         completion_params.pop("messages", None)
-        # BEGIN CHANGE BY wangsikan@kuaishou.com: capture reasoning returned by MCP bridge
         reasoning, output = run_mcp_completion(messages, completion_params, mcp_config)
         self.last_reasoning_content = reasoning
         return output
-        # END CHANGE BY wangsikan@kuaishou.com
 
     def chat(
         self,
@@ -478,21 +472,18 @@ class AIClient:
         if isinstance(mcp_config, dict) and mcp_config.get("ENABLED"):
             try:
                 output = self._chat_with_mcp(messages, params, mcp_config)
-                # BEGIN CHANGE BY wangsikan@kuaishou.com: surface reasoning from MCP bridge
                 mcp_reasoning = self.last_reasoning_content or ""
                 reasoning_text, output_text = self._cache_trace(
                     mcp_reasoning,
                     output,
                     unavailable_reason=None if mcp_reasoning else "(Reasoning not returned by MCP provider)",
                 )
-                # END CHANGE BY wangsikan@kuaishou.com
                 self.last_finish_reason = ""
                 self._emit_trace(reasoning_text, output_text)
                 return output
             except Exception as exc:
                 print(f"[AI] MCP bridge unavailable, fallback to plain completion: {type(exc).__name__}: {exc}")
 
-        # BEGIN BY wangsikan@kuaishou.com: detailed logging around completion call
         msg_count = len(messages)
         prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
         label = log_label or "completion"
@@ -566,7 +557,6 @@ class AIClient:
         if not streamed_trace_emitted:
             self._emit_trace(reasoning_text, output_text)
         return content
-        # END BY wangsikan@kuaishou.com
 
     def validate_config(self) -> tuple[bool, str]:
         """
@@ -578,10 +568,8 @@ class AIClient:
         if not self.model:
             return False, "未配置 AI 模型（model）"
 
-        # BEGIN BY wangsikan@kuaishou.com: github_copilot uses OAuth device flow, no API key required
         if not self.api_key and not str(self.model).lower().startswith("github_copilot/"):
             return False, "未配置 AI API Key，请在 config.yaml 或环境变量 AI_API_KEY 中设置"
-        # END BY wangsikan@kuaishou.com
 
         # 验证模型格式（应该包含 provider/model）
         if "/" not in self.model:

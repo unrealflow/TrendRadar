@@ -198,6 +198,7 @@ def _fetch_yahoo_history(
         return None
 
     meta = result.get("meta") or {}
+    timestamps = result.get("timestamp") or []
     indicators = result.get("indicators") or {}
     quote_data = ((indicators.get("quote") or [None])[0]) or {}
     closes = quote_data.get("close") or []
@@ -216,8 +217,13 @@ def _fetch_yahoo_history(
             high = close
         if not isinstance(low, (int, float)):
             low = close
+        date_text = ""
+        timestamp = timestamps[index] if index < len(timestamps) else None
+        if isinstance(timestamp, (int, float)):
+            date_text = datetime.utcfromtimestamp(timestamp).strftime("%Y-%m-%d")
         series.append(
             {
+                "date": date_text,
                 "close": float(close),
                 "high": float(high),
                 "low": float(low),
@@ -257,6 +263,7 @@ def _fetch_eastmoney_history(
         parts = line.split(",")
         if len(parts) < 5:
             continue
+        date_text = str(parts[0]).strip()
         close = _safe_float(parts[2])
         high = _safe_float(parts[3])
         low = _safe_float(parts[4])
@@ -268,6 +275,7 @@ def _fetch_eastmoney_history(
             low = close
         series.append(
             {
+                "date": date_text,
                 "close": close,
                 "high": high,
                 "low": low,

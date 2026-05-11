@@ -14,7 +14,6 @@ Deliberate simplicity:
   通过 `output/latest/` 下 `current.html` 的 AI 区块文本做基础统计。
 - 不在 Phase 4 中自动打分；输出结构方便后续接入 A/B 评估。
 
-BEGIN BY wangsikan@kuaishou.com: Phase 4 retrospective scaffold.
 """
 
 import argparse
@@ -217,4 +216,3 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# END BY wangsikan@kuaishou.com

@@ -314,6 +314,7 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
             peak_ai_config[output_key] = peak_ai.get(source_key)
 
     enabled_env = _get_env_bool("AI_ANALYSIS_ENABLED")
+    include_rss_env = _get_env_bool("AI_ANALYSIS_INCLUDE_RSS")
     peak_enabled_env = _get_env_bool("AI_ANALYSIS_PEAK_ROUTING_ENABLED")
 
     return {
@@ -322,7 +323,7 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
         "PROMPT_FILE": ai_config.get("prompt_file", "ai_analysis_prompt.txt"),
         "MODE": ai_config.get("mode", "follow_report"),
         "MAX_NEWS_FOR_ANALYSIS": ai_config.get("max_news_for_analysis", 50),
-        "INCLUDE_RSS": ai_config.get("include_rss", True),
+        "INCLUDE_RSS": include_rss_env if include_rss_env is not None else ai_config.get("include_rss", True),
         "INCLUDE_RANK_TIMELINE": ai_config.get("include_rank_timeline", False),
         "INCLUDE_STANDALONE": ai_config.get("include_standalone", False),
         "STAGED_MODE": ai_config.get("staged_mode", False),
@@ -341,9 +342,7 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
         "MCP_CONFIG_FILE": ai_config.get("mcp_config_file", ""),
         "MCP_SERVERS": ai_config.get("mcp_servers", ["MiniMax"]),
         "MCP_MAX_TOOL_ROUNDS": ai_config.get("mcp_max_tool_rounds", 4),
-        # BEGIN BY wangsikan@kuaishou.com: Phase 3 - MCP idle watchdog timeout
         "MCP_IDLE_TIMEOUT_SECONDS": ai_config.get("mcp_idle_timeout_seconds", 300),
-        # END BY wangsikan@kuaishou.com
         "ENABLE_PORTFOLIO_TECHNICAL_SNAPSHOT": ai_config.get(
             "enable_portfolio_technical_snapshot",
             False,

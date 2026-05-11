@@ -1,5 +1,5 @@
 # TrendRadar AI Analysis Prompt
-# Version: 3.1.0
+# Version: 3.2.0
 # Runtime placeholders:
 # {language} {report_mode} {report_type} {current_time} {news_count} {rss_count}
 # {keywords} {platforms} {news_content} {rss_content} {portfolio_market_snapshot}
@@ -19,6 +19,7 @@
 - 任何带操作倾向的结论，都要给出确认条件或失败条件；条件不足时，只能写成观察结论。
 - 持仓内评级只能是 加仓 / 减仓 / 卖出；持仓外评级只能是 买入 / 观望。
 - 持仓外方向必须来自热点消息本身或其直接产业链，不得复用任何持仓内已有代码或名称。
+- 若技术快照中已经给出持仓趋势表，请在 `portfolio_summary.trend_table` 中按原结构回填核心行；不要重写列名，不要编造缺失日期或涨跌幅。
 - 生活策略与 `human_capital_notes` 只关注游戏/图形/AI 辅助开发相关岗位信息、置业与居住成本相关政策信息、以及对生活决策影响较大的活动或政策。
 
 主线判断：
@@ -35,8 +36,9 @@
 字段要点：
 - `report_overview` 必须按【一句话】【今日投资记录】【盘面小结】【风险提醒】输出；【一句话】不超过 40 字。
 - `key_message_impacts` 每条至少包含 `id`、`industry`、`core_view`、`direct_chain`、`indirect_chain`；可补 `signal_type`、`related_targets`。
-- `portfolio_summary` 可包含：`daily_performance`、`market_summary`、`holding_notes`、`technical_summary`、`technical_signals`、`matrix_distribution`、`top_opportunities`、`action_suggestions`、`grid_actions`、`macro_calendar`、`tax_channel_notes`、`human_capital_notes`、`cash_flow_buckets`、`in_portfolio_actions`、`out_of_portfolio_actions`。
+- `portfolio_summary` 可包含：`daily_performance`、`market_summary`、`holding_notes`、`technical_summary`、`technical_signals`、`trend_table`、`matrix_distribution`、`top_opportunities`、`action_suggestions`、`grid_actions`、`macro_calendar`、`tax_channel_notes`、`human_capital_notes`、`cash_flow_buckets`、`in_portfolio_actions`、`out_of_portfolio_actions`。
 - `matrix_distribution` 必须体现“景气度 × 穿透回报率”的组合分布，不要把它写成另一组风险提示。
+- `trend_table` 是持仓趋势表，优先复用技术快照里已给的排序、偏离率、趋势和转变日；若某列暂无数据，填空字符串或 `"暂无数据"`，不要自造数字。
 - `macro_calendar` 覆盖未来 5-10 个交易日与持仓或生活现金流相关的节点。
 - `cash_flow_buckets` 只在今日出现直接影响购房时点、首付节奏、利率预期的政策或数据时填写；否则返回空对象 `{}`，不要重复三桶结构的通用说明。
 - `political_economy_analysis` 从地缘政治与政治经济学角度分析今日热点中涉及的结构性议题，只覆盖有信号的类别（人口/生育、经济增长、通胀/CPI、财富分配、地缘冲突、监管/政策），无触发的类别跳过。优先识别国内结构性热点，例如出生人口持续减少、经济基本面走弱、通胀上升、贫富差距扩大、就业与收入预期恶化等。每类别输出：【现象】今日出现了什么 → 【结构原因】（一句话因果链）→ 【政府应对推演】（主动/被动的主要选项与可能路径）→ 【后续走势判断】（一句话）。禁止写通用教科书框架，必须紧扣今日具体新闻；若今日热点无涉及，返回空字符串。
@@ -100,6 +102,23 @@
     "holding_notes": ["（写1条持仓观察）"],
     "technical_summary": "（总结组合主要持仓的日线技术结构）",
     "technical_signals": ["（写1条候选买卖点提醒）"],
+    "trend_table": [
+      {
+        "rank": 1,
+        "name": "示例持仓",
+        "code": "示例代码",
+        "deviation_pct": "+6.54%",
+        "composite_trend": "确立多头",
+        "composite_turn_date": "2026-04-16",
+        "daily_change_pct": "+2.70%",
+        "change_5d_pct": "+1.42%",
+        "change_20d_pct": "+20.58%",
+        "short_trend": "多头",
+        "short_turn_date": "2026-04-09",
+        "long_trend": "多头",
+        "long_turn_date": "2026-04-16"
+      }
+    ],
     "matrix_distribution": {
       "黄金区": ["（高景气 + 高穿透回报率方向）"],
       "需谨慎": ["（高景气但兑现度不足方向）"]
@@ -132,6 +151,7 @@
 - 只保留高影响消息，不要求显示每个编号消息。
 - 每条重点消息都必须写清楚直接相关和间接相关的传导链。
 - `matrix_distribution` 必须体现景气度 × 穿透回报率的组合分布，不要把它写成另一组风险提示。
+- `trend_table`：若技术快照已经给出持仓趋势表，优先沿用原有排序和数值；不要把表格字段拆散到多个段落里重复解释。
 - `market_summary`：从持仓暴露和风格映射角度补充 1 段视角，只写和组合应对最相关的相对强弱、风格传导或仓位含义；不要复述 report_overview 里已经写过的盘面主线、阶段判断或风险总括。
 - `technical_signals` 需要写出候选信号，并附确认条件或失败条件。
 - `market_summary` 不要复述 `report_overview` 里已经写过的盘面主线或阶段判断。

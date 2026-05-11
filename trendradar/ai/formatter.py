@@ -29,13 +29,11 @@ _FEISHU_MARKDOWN_REPLACEMENTS = {
     "【持仓内】": "【🧺 持仓内】",
     "【持仓外】": "【🧭 持仓外】",
     "【风险提示】": "【⚠️ 风险提示】",
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.E - persona section decorations
     "【网格操作】": "【🧮 网格操作】",
     "【宏观日历】": "【📅 宏观日历】",
     "【分红/通道】": "【🏦 分红/通道】",
     "【人力资本】": "【🧑‍💼 人力资本】",
     "【现金流桶】": "【💰 现金流桶】",
-    # END BY wangsikan@kuaishou.com
 }
 
 
@@ -245,6 +243,61 @@ def _extract_portfolio_notes(value) -> list[str]:
     return []
 
 
+def _extract_trend_table_rows(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    rows = []
+    for item in value:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _format_trend_pct(value) -> str:
+    if isinstance(value, str):
+        text = value.strip()
+        return text if text else "-"
+    try:
+        return f"{float(value):+.2f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _format_trend_view(trend_value, date_value) -> str:
+    trend = str(trend_value or "").strip()
+    date_text = str(date_value or "").strip()
+    if not trend:
+        return "-"
+    if date_text:
+        return f"{trend}({date_text})"
+    return trend
+
+
+def _append_portfolio_trend_table(lines: list[str], portfolio: dict) -> None:
+    trend_rows = _extract_trend_table_rows(portfolio.get("trend_table"))
+    if not trend_rows:
+        return
+
+    lines.append("【持仓趋势表】")
+    lines.append("排序 | 名称 | 偏离率 | 综合趋势 | 转变日 | 代码 | 今日 | 5日 | 20日 | 短线 | 长线")
+    for index, row in enumerate(trend_rows, start=1):
+        rank = row.get("rank", index)
+        name = str(row.get("name") or "-").strip()
+        deviation_pct = _format_trend_pct(row.get("deviation_pct"))
+        composite_trend = str(row.get("composite_trend") or "-").strip()
+        composite_turn_date = str(row.get("composite_turn_date") or "-").strip()
+        code = str(row.get("code") or "-").strip()
+        daily_change_pct = _format_trend_pct(row.get("daily_change_pct"))
+        change_5d_pct = _format_trend_pct(row.get("change_5d_pct"))
+        change_20d_pct = _format_trend_pct(row.get("change_20d_pct"))
+        short_view = _format_trend_view(row.get("short_trend"), row.get("short_turn_date"))
+        long_view = _format_trend_view(row.get("long_trend"), row.get("long_turn_date"))
+        lines.append(
+            f"{rank} | {name} | {deviation_pct} | {composite_trend} | {composite_turn_date} | {code} | {daily_change_pct} | {change_5d_pct} | {change_20d_pct} | {short_view} | {long_view}"
+        )
+    lines.append("")
+
+
 def _append_portfolio_context(lines: list[str], portfolio: dict) -> None:
     daily_summary = _extract_portfolio_summary_text(portfolio.get("daily_performance"))
     if daily_summary:
@@ -275,12 +328,11 @@ def _append_portfolio_context(lines: list[str], portfolio: dict) -> None:
             lines.append(f"{index}. {signal}")
         lines.append("")
 
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.E - render 5 new persona-aware fields
+    _append_portfolio_trend_table(lines, portfolio)
+
     _append_portfolio_persona_sections(lines, portfolio)
-    # END BY wangsikan@kuaishou.com
 
 
-# BEGIN BY wangsikan@kuaishou.com: Phase 3.E - persona-aware render helpers
 def _append_portfolio_persona_sections(lines: list[str], portfolio: dict) -> None:
     """Render 5 persona-aware sections produced by prompt v3.3.0.
 
@@ -423,7 +475,6 @@ def _persona_bucket_to_text(value) -> str:
     if note:
         parts.append(str(note))
     return "；".join(parts)
-# END BY wangsikan@kuaishou.com
 
 
 def _append_portfolio_matrix_sections(lines: list[str], portfolio: dict) -> None:
@@ -541,7 +592,6 @@ def _has_research_sections(result: AIAnalysisResult) -> bool:
     return bool(_get_research_sections(result))
 
 
-# BEGIN BY wangsikan@kuaishou.com: Phase 3.B - completeness banner (data-missing alert)
 def _collect_completeness_warnings(result: AIAnalysisResult) -> list[str]:
     """Detect missing / low-quality sections and return banner warnings."""
     warnings: list[str] = []
@@ -602,14 +652,11 @@ def _render_banner_plain(warnings: list[str]) -> list[str]:
         lines.append(f"- {warning}")
     lines.append("")
     return lines
-# END BY wangsikan@kuaishou.com
 
 
 def _render_research_markdown(result: AIAnalysisResult) -> str:
     lines = ["**✨ AI 热点研判**", ""]
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - prepend completeness banner
     lines = _render_banner_markdown(_collect_completeness_warnings(result)) + lines
-    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"**{title}**", content, ""])
     return "\n".join(lines)
@@ -617,11 +664,9 @@ def _render_research_markdown(result: AIAnalysisResult) -> str:
 
 def _render_research_dingtalk(result: AIAnalysisResult) -> str:
     lines = ["### ✨ AI 热点研判", ""]
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for dingtalk
     warnings = _collect_completeness_warnings(result)
     if warnings:
         lines = ["> ⚠️ **数据不完整**：" + "；".join(warnings), ""] + lines
-    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"#### {title}", content, ""])
     return "\n".join(lines)
@@ -629,9 +674,7 @@ def _render_research_dingtalk(result: AIAnalysisResult) -> str:
 
 def _render_research_plain(result: AIAnalysisResult) -> str:
     lines = ["【✨ AI 热点研判】", ""]
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for plain
     lines = _render_banner_plain(_collect_completeness_warnings(result)) + lines
-    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"[{title}]", content, ""])
     return "\n".join(lines)
@@ -639,12 +682,10 @@ def _render_research_plain(result: AIAnalysisResult) -> str:
 
 def _render_research_telegram(result: AIAnalysisResult) -> str:
     lines = ["<b>✨ AI 热点研判</b>", ""]
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for telegram
     warnings = _collect_completeness_warnings(result)
     if warnings:
         banner = "⚠️ <b>数据不完整</b>：" + _escape_html("；".join(warnings))
         lines = [banner, ""] + lines
-    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         lines.extend([f"<b>{_escape_html(title)}</b>", _escape_html(content), ""])
     return "\n".join(lines)
@@ -652,7 +693,6 @@ def _render_research_telegram(result: AIAnalysisResult) -> str:
 
 def _render_research_html(result: AIAnalysisResult) -> str:
     html_parts = ['<div class="ai-analysis">', "<h3>✨ AI 热点研判</h3>"]
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for html
     warnings = _collect_completeness_warnings(result)
     if warnings:
         warn_html = "；".join(_escape_html(w) for w in warnings)
@@ -660,7 +700,6 @@ def _render_research_html(result: AIAnalysisResult) -> str:
             1,
             f'<div class="ai-warning" style="color:#c00;font-weight:bold;">⚠️ 数据不完整：{warn_html}</div>',
         )
-    # END BY wangsikan@kuaishou.com
     for title, content in _get_research_sections(result):
         content_html = _escape_html(content).replace("\n", "<br>")
         html_parts.extend(
@@ -676,7 +715,6 @@ def _render_research_html(result: AIAnalysisResult) -> str:
 
 
 def _render_research_html_rich(result: AIAnalysisResult) -> str:
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.B - banner for html rich
     warnings = _collect_completeness_warnings(result)
     warning_html = ""
     if warnings:
@@ -687,7 +725,6 @@ def _render_research_html_rich(result: AIAnalysisResult) -> str:
             f'padding:8px 12px;margin:4px 0 12px;border-radius:4px;">'
             f'⚠️ 数据不完整：{warn_html}</div>'
         )
-    # END BY wangsikan@kuaishou.com
     ai_html = """
                 <div class="ai-section">
                     <div class="ai-section-header">

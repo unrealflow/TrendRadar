@@ -16,10 +16,9 @@ from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Optional
 
 try:
-    import yaml  # BEGIN BY wangsikan@kuaishou.com: optional yaml for external config
+    import yaml  # Optional yaml for external config
 except Exception:
     yaml = None
-# END BY wangsikan@kuaishou.com
 
 from trendradar.ai.client import AIClient
 from trendradar.ai.portfolio_market import build_portfolio_market_snapshot
@@ -58,9 +57,7 @@ class AIAnalysisResult:
     hotlist_count: int = 0               # 热榜新闻数
     rss_count: int = 0                   # RSS 新闻数
     ai_mode: str = ""                    # AI 分析使用的模式 (daily/current/incremental)
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.F - per-stage telemetry
     stage_stats: List[Dict[str, Any]] = field(default_factory=list)
-    # END BY wangsikan@kuaishou.com
 
 
 class AIAnalyzer:
@@ -213,13 +210,11 @@ class AIAnalyzer:
         )
         self.language = analysis_config.get("LANGUAGE", "Chinese")
         self.staged_mode = analysis_config.get("STAGED_MODE", False)
-        # BEGIN ADD BY wangsikan@kuaishou.com: gate MCP and reasoning to main analysis prompt
         self._is_main_analysis_prompt: bool = (
             os.path.basename(
                 str(analysis_config.get("PROMPT_FILE", self._MAIN_ANALYSIS_PROMPT) or self._MAIN_ANALYSIS_PROMPT)
             ).lower() == self._MAIN_ANALYSIS_PROMPT
         )
-        # END ADD BY wangsikan@kuaishou.com
         self.mcp_runtime_config = None
         if analysis_config.get("ENABLE_MCP", False) and self._is_main_analysis_prompt:
             self.mcp_runtime_config = {
@@ -229,19 +224,15 @@ class AIAnalyzer:
                 "CONFIG_FILE": analysis_config.get("MCP_CONFIG_FILE", ""),
                 "SERVERS": analysis_config.get("MCP_SERVERS", ["MiniMax"]),
                 "MAX_TOOL_ROUNDS": analysis_config.get("MCP_MAX_TOOL_ROUNDS", 4),
-                # BEGIN BY wangsikan@kuaishou.com: Phase 3 - expose idle watchdog
                 "IDLE_TIMEOUT_SECONDS": analysis_config.get(
                     "MCP_IDLE_TIMEOUT_SECONDS", 300
                 ),
-                # END BY wangsikan@kuaishou.com
             }
-        # BEGIN ADD BY wangsikan@kuaishou.com: strip reasoning params for non-main prompts
         if not self._is_main_analysis_prompt:
             ep = dict(self.client.extra_params or {})
             ep.pop("reasoning_effort", None)
             ep.pop("thinking", None)
             self.client.extra_params = ep
-        # END ADD BY wangsikan@kuaishou.com
         configured_staged_sections = analysis_config.get(
             "STAGED_SECTIONS",
             self.DEFAULT_STAGED_SECTIONS,
@@ -266,7 +257,6 @@ class AIAnalyzer:
             self.user_prompt_template,
         )
 
-        # BEGIN BY wangsikan@kuaishou.com: Phase 2 - load holdings & filters from external yaml
         yaml_holdings = self._load_portfolio_from_yaml()
         if yaml_holdings:
             self.portfolio_holdings = yaml_holdings
@@ -290,7 +280,6 @@ class AIAnalyzer:
             market_kw = external_filters.get("market_summary_keywords")
             if isinstance(market_kw, list) and market_kw:
                 self.MARKET_SUMMARY_KEYWORDS = {str(x) for x in market_kw}
-        # END BY wangsikan@kuaishou.com
 
     def analyze(
         self,
@@ -336,7 +325,6 @@ class AIAnalyzer:
         max_tokens = self.ai_config.get("MAX_TOKENS", 5000)
         print(f"[AI] 参数: timeout={timeout}, max_tokens={max_tokens}")
 
-        # BEGIN BY wangsikan@kuaishou.com: allow github_copilot provider (OAuth device flow, no API key)
         model_lower = str(model or "").lower()
         needs_api_key = not model_lower.startswith("github_copilot/")
         if needs_api_key and not self.client.api_key:
@@ -344,7 +332,6 @@ class AIAnalyzer:
                 success=False,
                 error="未配置 AI API Key，请在 config.yaml 或环境变量 AI_API_KEY 中设置"
             )
-        # END BY wangsikan@kuaishou.com
 
         # 准备新闻内容并获取统计数据
         news_content, rss_content, hotlist_total, rss_total, analyzed_count, message_catalog = self._prepare_news_content(stats, rss_stats)
@@ -492,7 +479,6 @@ class AIAnalyzer:
                 error_msg = error_msg[:200] + "..."
             friendly_msg = f"AI 分析失败 ({error_type}): {error_msg}"
 
-            # BEGIN BY wangsikan@kuaishou.com: friendly hint for github_copilot auth/empty-response failures
             model_lower = str(self.client.model or "").lower()
             lower_err = error_msg.lower()
             if model_lower.startswith("github_copilot/") and (
@@ -507,7 +493,6 @@ class AIAnalyzer:
                     "https://github.com/login/device 并输入终端显示的一次性 code 完成登录；"
                     "登录后 token 会缓存到 ~/.config/litellm/github_copilot/，之后无需重复。"
                 )
-            # END BY wangsikan@kuaishou.com
 
             return AIAnalysisResult(
                 success=False,
@@ -607,15 +592,12 @@ class AIAnalyzer:
             if section in self.VALID_STAGED_SECTIONS
         ]
 
-        # BEGIN BY wangsikan@kuaishou.com: Phase 3.F - structured per-stage telemetry
         import time as _time
         stage_stats: List[Dict[str, Any]] = list(getattr(merged_result, "stage_stats", None) or [])
-        # END BY wangsikan@kuaishou.com
 
         for index, section in enumerate(sections_to_run, start=1):
             print(f"[AI] 分板块 {index}/{len(sections_to_run)}: {section}")
             stage_prompt = self._build_stage_prompt(base_user_prompt, section, stage_context)
-            # BEGIN BY wangsikan@kuaishou.com: Phase 3.F - timing per stage
             _t0 = _time.time()
             stage_result = self._execute_analysis_prompt(
                 stage_prompt,
@@ -638,7 +620,6 @@ class AIAnalyzer:
                     "error": stage_result.error or "",
                 }
             )
-            # END BY wangsikan@kuaishou.com
 
             if not stage_result.success:
                 raise RuntimeError(stage_result.error or f"{section} 阶段失败")
@@ -648,11 +629,9 @@ class AIAnalyzer:
             stage_context = self._build_stage_context(merged_result)
 
         merged_result.raw_response = "\n\n".join(raw_parts)
-        # BEGIN BY wangsikan@kuaishou.com: Phase 3.F - expose stage_stats for downstream reports
         merged_result.stage_stats = stage_stats
         total = sum(s["elapsed_sec"] for s in stage_stats)
         print(f"[AI][stage] 分板块合计耗时 {total:.1f}s")
-        # END BY wangsikan@kuaishou.com
         return merged_result
 
     def _build_stage_prompt(
@@ -933,7 +912,6 @@ class AIAnalyzer:
 
         return codes, names
 
-    # BEGIN BY wangsikan@kuaishou.com: Phase 2 - external yaml loaders & renderers
     def _config_dir(self) -> str:
         """Locate the repo's config directory (two levels above this file)."""
         here = os.path.dirname(os.path.abspath(__file__))
@@ -1034,7 +1012,6 @@ class AIAnalyzer:
         if isinstance(data, dict):
             return data
         return None
-    # END BY wangsikan@kuaishou.com
 
     def _extract_portfolio_holding_rows(self, prompt_template: str) -> List[Dict[str, Any]]:
         """从提示词中的内嵌持仓表提取代码、名称和仓位。"""
@@ -1414,6 +1391,10 @@ class AIAnalyzer:
             if isinstance(technical_signals, list) and technical_signals:
                 merged_summary["technical_signals"] = technical_signals
 
+        trend_table = portfolio_technical_snapshot.get("trend_table")
+        if isinstance(trend_table, list) and trend_table:
+            merged_summary["trend_table"] = trend_table
+
         return merged_summary
 
     def _extract_labeled_section(self, text: str, label: str) -> str:
@@ -1723,12 +1704,9 @@ class AIAnalyzer:
         enriched_impacts.sort(
             key=lambda item: catalog_order.get(item.get("id", ""), len(catalog_order))
         )
-        # BEGIN BY wangsikan@kuaishou.com: Phase 3.C - dedupe near-duplicate impact items
         enriched_impacts = self._dedupe_message_impacts(enriched_impacts)
-        # END BY wangsikan@kuaishou.com
         return enriched_impacts
 
-    # BEGIN BY wangsikan@kuaishou.com: Phase 3.C - SequenceMatcher-based dedupe
     def _dedupe_message_impacts(
         self,
         impacts: List[Dict[str, Any]],
@@ -1773,7 +1751,6 @@ class AIAnalyzer:
             kept.append(item)
             kept_signatures.append(signature)
         return kept
-    # END BY wangsikan@kuaishou.com
 
     def _parse_clock_minutes(self, value: str, fallback: str) -> int:
         raw_value = str(value or fallback).strip() or fallback
@@ -1916,9 +1893,7 @@ class AIAnalyzer:
         ]
 
         try:
-            # BEGIN CHANGE BY wangsikan@kuaishou.com: never use MCP or reasoning for JSON repair
             response = self.client.chat(messages, _skip_reasoning=True)
-            # END CHANGE BY wangsikan@kuaishou.com
             return self._parse_response(response)
         except Exception as e:
             print(f"[AI] 重试修复 JSON 异常: {type(e).__name__}: {e}")
