@@ -316,6 +316,8 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
     enabled_env = _get_env_bool("AI_ANALYSIS_ENABLED")
     include_rss_env = _get_env_bool("AI_ANALYSIS_INCLUDE_RSS")
     peak_enabled_env = _get_env_bool("AI_ANALYSIS_PEAK_ROUTING_ENABLED")
+    miaoxiang_market_env = _get_env_bool("AI_ANALYSIS_ENABLE_MIAOXIANG_MARKET")
+    miaoxiang_news_env = _get_env_bool("AI_ANALYSIS_ENABLE_MIAOXIANG_NEWS")
 
     return {
         "ENABLED": enabled_env if enabled_env is not None else ai_config.get("enabled", False),
@@ -343,8 +345,20 @@ def _load_ai_analysis_config(config_data: Dict) -> Dict:
         "MCP_SERVERS": ai_config.get("mcp_servers", ["MiniMax"]),
         "MCP_MAX_TOOL_ROUNDS": ai_config.get("mcp_max_tool_rounds", 4),
         "MCP_IDLE_TIMEOUT_SECONDS": ai_config.get("mcp_idle_timeout_seconds", 300),
+        "ENABLE_PORTFOLIO_MARKET_SNAPSHOT": ai_config.get(
+            "enable_portfolio_market_snapshot",
+            True,
+        ),
         "ENABLE_PORTFOLIO_TECHNICAL_SNAPSHOT": ai_config.get(
             "enable_portfolio_technical_snapshot",
+            False,
+        ),
+        "ENABLE_MIAOXIANG_MARKET": miaoxiang_market_env if miaoxiang_market_env is not None else ai_config.get(
+            "enable_miaoxiang_market",
+            False,
+        ),
+        "ENABLE_MIAOXIANG_NEWS": miaoxiang_news_env if miaoxiang_news_env is not None else ai_config.get(
+            "enable_miaoxiang_news",
             False,
         ),
         "PEAK_ROUTING": {

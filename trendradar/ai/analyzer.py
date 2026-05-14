@@ -24,6 +24,10 @@ from trendradar.ai.client import AIClient
 from trendradar.ai.portfolio_market import build_portfolio_market_snapshot
 from trendradar.ai.prompt_loader import load_prompt_template
 from trendradar.ai.technical_analysis import build_portfolio_technical_snapshot
+from trendradar.ai.miaoxiang_data import (
+    fetch_miaoxiang_market_snapshot,
+    fetch_miaoxiang_news_snapshot,
+)
 
 
 @dataclass
@@ -208,6 +212,14 @@ class AIAnalyzer:
             "ENABLE_PORTFOLIO_TECHNICAL_SNAPSHOT",
             False,
         )
+        self.enable_miaoxiang_market = analysis_config.get(
+            "ENABLE_MIAOXIANG_MARKET",
+            False,
+        )
+        self.enable_miaoxiang_news = analysis_config.get(
+            "ENABLE_MIAOXIANG_NEWS",
+            False,
+        )
         self.language = analysis_config.get("LANGUAGE", "Chinese")
         self.staged_mode = analysis_config.get("STAGED_MODE", False)
         self._is_main_analysis_prompt: bool = (
@@ -370,6 +382,11 @@ class AIAnalyzer:
         standalone_content = ""
         if self.include_standalone and standalone_data:
             standalone_content = self._prepare_standalone_content(standalone_data)
+
+        # 构建妙想数据快照（行情 + 资讯）
+        miaoxiang_market_snapshot = self._build_miaoxiang_market_snapshot()
+        miaoxiang_news_snapshot = self._build_miaoxiang_news_snapshot(keywords)
+
         runtime_placeholders = {
             "{report_mode}": report_mode,
             "{report_type}": report_type,
@@ -385,6 +402,8 @@ class AIAnalyzer:
             "{portfolio_technical_snapshot}": portfolio_technical_snapshot_text,
             "{portfolio_holdings_table}": self._portfolio_holdings_table_md or "（持仓列表未配置）",
             "{standalone_content}": standalone_content,
+            "{miaoxiang_market_snapshot}": miaoxiang_market_snapshot,
+            "{miaoxiang_news_snapshot}": miaoxiang_news_snapshot,
         }
 
         unresolved_system_placeholders = self._extract_placeholder_tokens(self.system_prompt)
@@ -1285,6 +1304,24 @@ class AIAnalyzer:
             return {
                 "prompt_text": "技术面快照暂不可用，请不要编造道氏趋势或缠论买卖点，只做定性观察。",
             }
+
+    def _build_miaoxiang_market_snapshot(self) -> str:
+        """Build Miaoxiang (Eastmoney) market data snapshot for holdings."""
+        if not self.enable_miaoxiang_market:
+            return "妙想行情快照已关闭。"
+        try:
+            return fetch_miaoxiang_market_snapshot(self.portfolio_holdings)
+        except Exception as e:
+            return f"妙想行情快照暂不可用 ({e})。"
+
+    def _build_miaoxiang_news_snapshot(self, keywords: Optional[List[str]]) -> str:
+        """Build Miaoxiang (Eastmoney) news snapshot based on hotlist keywords."""
+        if not self.enable_miaoxiang_news:
+            return "妙想资讯快照已关闭。"
+        try:
+            return fetch_miaoxiang_news_snapshot(keywords or [])
+        except Exception as e:
+            return f"妙想资讯快照暂不可用 ({e})。"
 
     def _resolve_portfolio_market_snapshot_text(self, snapshot: Any) -> str:
         """Resolve prompt text from a snapshot payload or test double."""
