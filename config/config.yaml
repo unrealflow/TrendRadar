@@ -579,11 +579,11 @@ ai_analysis:
   enable_portfolio_technical_snapshot: true
                                     # 是否为默认持仓注入日线技术面快照（道氏理论 + 缠论候选买卖点）
 
-  enable_miaoxiang_market: false     # 是否启用妙想（东方财富）行情快照
+  enable_miaoxiang_market: true     # 是否启用妙想（东方财富）行情快照
                                     # 开启后，AI 会收到来自东方财富权威数据库的持仓行情补充数据
                                     # 需要配置环境变量 MX_APIKEY
 
-  enable_miaoxiang_news: false       # 是否启用妙想（东方财富）资讯快照
+  enable_miaoxiang_news: true       # 是否启用妙想（东方财富）资讯快照
                                     # 开启后，AI 会收到来自东方财富权威资讯源的当日热点补充资讯
                                     # 需要配置环境变量 MX_APIKEY
 
